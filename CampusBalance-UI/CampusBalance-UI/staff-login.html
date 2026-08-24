@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CampusBalance | Staff Access</title>
+    <script src="config.js"></script>
+    <style>
+        :root { --primary: #1a1a2e; --accent: #4361ee; }
+        body { background: var(--primary); display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', sans-serif; margin: 0; }
+        .card { background: white; padding: 40px; border-radius: 20px; width: 360px; box-shadow: 0 20px 50px rgba(0,0,0,0.3); text-align: center;}
+        h1 { color: var(--accent); margin: 0 0 4px 0; font-size: 24px; }
+        .subtitle { color: #999; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 25px; }
+        .input-group { text-align: left; margin-bottom: 15px; }
+        label { font-size: 12px; font-weight: bold; color: #555; margin-left: 5px; }
+        input { width: 100%; padding: 12px; margin-top: 5px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 14px; }
+        .btn { width: 100%; padding: 12px; cursor: pointer; border: none; border-radius: 8px; font-weight: 600; margin-top: 10px; transition: 0.3s; }
+        .btn-login { background: var(--accent); color: white; margin-top: 15px; }
+        .btn-login:hover { background: #3046bc; }
+        .divider { margin: 25px 0 15px 0; border-top: 1px solid #eee; position: relative; }
+        .divider span { position: absolute; top: -10px; background: white; padding: 0 10px; left: 50%; transform: translateX(-50%); font-size: 11px; color: #bbb; text-transform: uppercase;}
+        .setup-box { background: #fff8e6; border: 1px solid #ffe0a3; border-radius: 10px; padding: 16px; text-align: left; }
+        .setup-box h3 { margin: 0 0 4px 0; font-size: 13px; color: #8a6300; }
+        .setup-box p { margin: 0 0 12px 0; font-size: 11px; color: #a37f00; }
+        .locked-msg { color: #888; font-size: 12px; }
+        .btn-setup { background: #ff9f1c; color: white; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>CampusBalance</h1>
+        <div class="subtitle">Staff Access — Admin &amp; Faculty</div>
+
+        <div class="input-group">
+            <label>USERNAME</label>
+            <input type="text" id="uid" placeholder="Your staff username">
+        </div>
+        <div class="input-group">
+            <label>PASSWORD</label>
+            <input type="password" id="psw" placeholder="••••••••">
+        </div>
+        <button class="btn btn-login" onclick="handleLogin()">Log In</button>
+
+        <div class="divider"><span>First-time setup</span></div>
+
+        <div id="setupBox" class="setup-box">
+            <h3>No admin account exists yet</h3>
+            <p>Register the one and only initial admin account below. Once created, this form disappears permanently — all other staff (faculty) accounts get created from inside the admin dashboard.</p>
+            <div class="input-group">
+                <label>ADMIN USERNAME</label>
+                <input type="text" id="aid" placeholder="e.g. admin1">
+            </div>
+            <div class="input-group">
+                <label>FULL NAME</label>
+                <input type="text" id="aname" placeholder="Your name">
+            </div>
+            <div class="input-group">
+                <label>DEPARTMENT</label>
+                <input type="text" id="adept" placeholder="e.g. Administration">
+            </div>
+            <div class="input-group">
+                <label>PASSWORD</label>
+                <input type="password" id="apsw" placeholder="••••••••">
+            </div>
+            <button class="btn btn-setup" onclick="registerAdmin()">Create Admin Account</button>
+        </div>
+        <p id="lockedMsg" class="locked-msg" style="display:none;">An admin account already exists. Contact your admin for staff credentials.</p>
+    </div>
+
+    <script>
+        async function checkAdminExists() {
+            try {
+                const res = await fetch(`${API_BASE}/api/admin-exists`);
+                const exists = await res.json();
+                document.getElementById('setupBox').style.display = exists ? 'none' : 'block';
+                document.getElementById('lockedMsg').style.display = exists ? 'block' : 'none';
+            } catch (err) {
+                console.error("Could not check admin status", err);
+            }
+        }
+
+        async function handleLogin() {
+            const username = document.getElementById('uid').value.trim();
+            const password = document.getElementById('psw').value;
+            if (!username || !password) return alert("Please fill in username and password");
+
+            try {
+                const response = await fetch(`${API_BASE}/api/login`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (response.ok) {
+                    const account = await response.json();
+                    if (account.role === 'STUDENT') {
+                        alert("This is a student account — please use the main login page instead.");
+                        return;
+                    }
+                    localStorage.setItem('activeUser', username);
+                    localStorage.setItem('activeRole', account.role);
+                    window.location.href = account.role === 'ADMIN' ? 'admin.html' : 'faculty.html';
+                } else {
+                    alert("Login Failed: Incorrect username or password");
+                }
+            } catch (err) {
+                alert("Could not reach the server. Is the backend running?");
+            }
+        }
+
+        async function registerAdmin() {
+            const username = document.getElementById('aid').value.trim();
+            const name = document.getElementById('aname').value.trim();
+            const department = document.getElementById('adept').value.trim();
+            const password = document.getElementById('apsw').value;
+            if (!username || !name || !password) return alert("Please fill in all fields");
+
+            try {
+                const response = await fetch(`${API_BASE}/api/register-admin`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ username, name, department, password })
+                });
+                if (response.ok) {
+                    alert("Admin account created! You can now log in above.");
+                    checkAdminExists();
+                } else {
+                    const msg = await response.text();
+                    alert(msg);
+                    checkAdminExists();
+                }
+            } catch (err) {
+                alert("Could not reach the server. Is the backend running?");
+            }
+        }
+
+        checkAdminExists();
+    </script>
+</body>
+</html>

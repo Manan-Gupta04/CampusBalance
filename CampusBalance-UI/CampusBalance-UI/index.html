@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>CampusBalance | Intelligent Student Analytics</title>
+    <script src="config.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --primary: #4361ee; --success: #4cc9f0; --danger: #f72585;
+            --dark: #1a1a2e; --light: #f8f9fa; --card-bg: #ffffff;
+        }
+        body { font-family: 'Inter', sans-serif; background: var(--light); margin: 0; display: flex; color: #333; }
+
+        /* Sidebar */
+        .sidebar { width: 260px; background: var(--dark); color: white; height: 100vh; position: fixed; padding: 30px 20px; box-sizing: border-box; overflow-y: auto; display: flex; flex-direction: column; }
+        .sidebar h2 { color: var(--success); margin-bottom: 20px; font-size: 22px; letter-spacing: 1px; }
+        .sidebar-item { padding: 12px 18px; cursor: pointer; border-radius: 10px; margin-bottom: 8px; transition: 0.3s; font-weight: 500; font-size: 14px; }
+        .sidebar-item:hover { background: rgba(255,255,255,0.1); }
+        .active-tab { background: var(--primary) !important; box-shadow: 0 4px 15px rgba(67, 97, 238, 0.4); }
+
+        /* Main Content */
+        .main { margin-left: 260px; padding: 40px; width: calc(100% - 260px); box-sizing: border-box; }
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; flex-wrap: wrap; gap: 12px; }
+
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .card { background: var(--card-bg); border-radius: 16px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .card h3 { margin: 0 0 10px 0; font-size: 14px; text-transform: uppercase; color: #888; }
+
+        .status-badge { padding: 6px 16px; border-radius: 30px; font-size: 12px; font-weight: 700; }
+        .HIGH { background: #ffe3e3; color: var(--danger); }
+        .MEDIUM { background: #fff4e3; color: #ff9f1c; }
+        .LOW { background: #e3fcf7; color: #00b894; }
+
+        .tab-content { display: none; }
+        .active-content { display: block; }
+
+        input, select { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+        .btn { cursor: pointer; border: none; padding: 12px 20px; border-radius: 8px; font-weight: 600; transition: 0.2s; }
+        .btn-primary { background: var(--primary); color: white; width: 100%; }
+        .btn-success { background: #52c41a; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; border:none; }
+        .banner { background: #fff4e3; border: 1px solid #ff9f1c; color: #8a5300; padding: 14px 18px; border-radius: 10px; margin-bottom: 20px; font-size: 14px; }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>CampusBalance</h2>
+        <p id="sideName" style="opacity: 0.7; margin-bottom: 10px;">User Loading...</p>
+        <div class="sidebar-item active-tab" onclick="showTab('dashboard', this)">🏠 Dashboard</div>
+        <div class="sidebar-item" onclick="showTab('logs', this)">📊 Wellness Logs</div>
+        <div class="sidebar-item" onclick="showTab('tasks', this)">📅 Assignments</div>
+        <div class="sidebar-item" onclick="showTab('subjects', this)">🧪 Subjects</div>
+        <div class="sidebar-item" onclick="showTab('focus', this)">🔥 Focus Activities</div>
+        <div class="sidebar-item" onclick="showTab('recovery', this)">🌱 Recovery Activities</div>
+        <div class="sidebar-item" onclick="showTab('calendar', this)">🗓️ Calendar</div>
+        <div class="sidebar-item" onclick="showTab('semester', this)">🎓 Semester</div>
+        <div class="sidebar-item" onclick="showTab('profile', this)">👤 Profile / History</div>
+        <div class="sidebar-item" onclick="logout()" style="color:#ff7675; margin-top: auto;">🚪 Logout</div>
+    </div>
+
+    <div class="main">
+        <div id="dashboard" class="tab-content active-content">
+            <div class="header">
+                <h1 id="welcomeTitle">Loading Dashboard...</h1>
+                <span id="riskLabel" class="status-badge LOW">LOW RISK</span>
+            </div>
+            <div id="noSemesterBanner" class="banner" style="display:none; background:#e3fcf7; border-color:#4cc9f0; color:#00707a;">
+                📚 You don't have an active semester yet. Go to the <strong>Semester</strong> tab to start one — that unlocks Subjects, Assignments, Focus/Recovery Activities and Wellness Logs.
+            </div>
+            <div id="overloadBanner" class="banner" style="display:none;">
+                ⚠️ Your workload has stayed above 85% of capacity for 3+ days. Consider talking to your advisor.
+            </div>
+            <div class="stats-grid">
+                <div class="card"><h3>Balance Score</h3><h2 id="balanceText">0%</h2></div>
+                <div class="card"><h3>Workload Index</h3><h2 id="workloadText">0.0</h2></div>
+                <div class="card"><h3>Total XP</h3><h2 id="xpText">0 XP</h2></div>
+            </div>
+            <div class="card">
+                <h3>Wellness vs. Stress Trends</h3>
+                <canvas id="wellnessChart"></canvas>
+            </div>
+        </div>
+
+        <div id="logs" class="tab-content">
+            <div class="card" style="max-width: 500px;">
+                <h2>Daily Wellness Check-in</h2>
+                <label>How many hours did you sleep?</label>
+                <input type="number" id="sleepHrs" placeholder="e.g. 7.5">
+
+                <label>How many hours did you study?</label>
+                <input type="number" id="studyHrs" placeholder="e.g. 5">
+
+                <label>Self-Reported Mood</label>
+                <select id="moodSelect">
+                    <option value="😄 Good / Relaxed">😄 Good / Relaxed</option>
+                    <option value="😐 Neutral / Busy">😐 Neutral / Busy</option>
+                    <option value="😫 Stressed / Anxious">😫 Stressed / Anxious</option>
+                </select>
+                <label>Energy Level (1-5)</label>
+                <input type="number" id="energyLv" min="1" max="5" placeholder="5 = High Energy">
+                <button class="btn btn-primary" onclick="submitLog()">Save Daily Log</button>
+            </div>
+        </div>
+
+        <div id="tasks" class="tab-content">
+            <div class="card" style="max-width: 500px;">
+                <h2>Add New Assignment</h2>
+                <input type="text" id="tTitle" placeholder="Task Name">
+                <label>Subject</label>
+                <select id="tSub"></select>
+                <label>Deadline Date & Time</label>
+                <input type="datetime-local" id="tDeadline">
+                <label>Priority (1-5)</label>
+                <input type="number" id="tPriority" min="1" max="5">
+                <select id="tDiff">
+                    <option value="Easy">Easy</option>
+                    <option value="Medium">Medium</option>
+                    <option value="Hard">Hard</option>
+                </select>
+                <button class="btn btn-primary" onclick="submitTask()">Create Task</button>
+            </div>
+            <div id="taskList"></div>
+        </div>
+
+        <div id="subjects" class="tab-content">
+            <div class="card" style="max-width: 500px;">
+                <h2>Add a Subject This Semester</h2>
+                <label>Subject Name</label>
+                <input type="text" id="subName" placeholder="e.g. Operating Systems">
+                <label>Department</label>
+                <input type="text" id="subDept" placeholder="e.g. CSE">
+                <label>Course Credits</label>
+                <input type="number" id="subCredits" placeholder="e.g. 4" min="1">
+                <button class="btn btn-primary" onclick="addSubject()">Add Subject</button>
+            </div>
+
+            <div class="card" style="max-width: 600px;">
+                <h2>Calibrate a Subject (Weeks 1-2)</h2>
+                <p style="color:#888; font-size: 13px;">
+                    New subjects need a difficulty rating from you during their first two weeks.
+                    Once both weeks are logged, CampusBalance calculates a Difficulty Coefficient (D<sub>s</sub>)
+                    for that subject and uses it in your Workload Index automatically.
+                </p>
+                <label>Subject</label>
+                <select id="cSubject"></select>
+                <label>How difficult does this subject feel? (1 = Easy, 5 = Very Hard)</label>
+                <input type="number" id="cDifficulty" min="1" max="5" placeholder="1-5">
+                <label>Hours studied for this subject this week</label>
+                <input type="number" id="cHours" placeholder="e.g. 6">
+                <label>Calibration Week</label>
+                <select id="cWeek">
+                    <option value="1">Week 1</option>
+                    <option value="2">Week 2</option>
+                </select>
+                <button class="btn btn-primary" onclick="submitCalibration()">Submit Calibration Log</button>
+            </div>
+            <div id="subjectList"></div>
+        </div>
+
+        <div id="focus" class="tab-content">
+            <div class="card" style="max-width: 500px;">
+                <h2>Add a Focus Activity</h2>
+                <p style="color:#888; font-size:13px;">Focus Activities are the things you're actively grinding this semester besides coursework — each one adds to your stress load. Pick a preset or add your own.</p>
+                <label>Preset</label>
+                <select id="focusPreset" onchange="onFocusPresetChange()">
+                    <option value="">-- choose a preset or Other --</option>
+                    <option value="DSA Practice|5">DSA Practice</option>
+                    <option value="Placement Prep|7">Placement Prep</option>
+                    <option value="Personal Project|4">Personal Project</option>
+                    <option value="Internship / Job|8">Internship / Job</option>
+                    <option value="Certification Course|5">Certification Course</option>
+                    <option value="Research / Thesis|6">Research / Thesis</option>
+                    <option value="Competitive Exam Prep|7">Competitive Exam Prep</option>
+                    <option value="other">Other (custom)</option>
+                </select>
+                <div id="focusCustomBox" style="display:none;">
+                    <label>Activity Name</label>
+                    <input type="text" id="focusCustomName" placeholder="e.g. Freelance Client Work">
+                    <label>Stress Weight (1-10)</label>
+                    <input type="number" id="focusCustomWeight" min="1" max="10" placeholder="1-10">
+                </div>
+                <button class="btn btn-primary" onclick="addFocusActivity()">Add Focus Activity</button>
+            </div>
+            <div id="focusList"></div>
+        </div>
+
+        <div id="recovery" class="tab-content">
+            <div class="card" style="max-width: 500px;">
+                <h2>Add a Recovery Activity</h2>
+                <p style="color:#888; font-size:13px;">Recovery Activities relieve stress — rest, co-curriculars, sports and so on. Each active one subtracts from your workload. Pick a preset or add your own.</p>
+                <label>Preset</label>
+                <select id="recoveryPreset" onchange="onRecoveryPresetChange()">
+                    <option value="">-- choose a preset or Other --</option>
+                    <option value="Sleep / Rest Focus|3">Sleep / Rest Focus</option>
+                    <option value="Co-curricular Club|3">Co-curricular Club</option>
+                    <option value="Sports / Fitness|4">Sports / Fitness</option>
+                    <option value="Meditation / Mindfulness|2">Meditation / Mindfulness</option>
+                    <option value="Hobby / Creative Time|2">Hobby / Creative Time</option>
+                    <option value="Social / Family Time|3">Social / Family Time</option>
+                    <option value="other">Other (custom)</option>
+                </select>
+                <div id="recoveryCustomBox" style="display:none;">
+                    <label>Activity Name</label>
+                    <input type="text" id="recoveryCustomName" placeholder="e.g. Weekend Trekking">
+                    <label>Relief Weight (1-10)</label>
+                    <input type="number" id="recoveryCustomWeight" min="1" max="10" placeholder="1-10">
+                </div>
+                <button class="btn btn-primary" onclick="addRecoveryActivity()">Add Recovery Activity</button>
+            </div>
+            <div id="recoveryList"></div>
+        </div>
+
+        <div id="calendar" class="tab-content">
+            <div class="card">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                    <button class="btn" style="background:#eee;" onclick="shiftMonth(-1)">◀ Prev</button>
+                    <h2 id="calMonthLabel" style="margin:0;">Month</h2>
+                    <button class="btn" style="background:#eee;" onclick="shiftMonth(1)">Next ▶</button>
+                </div>
+                <div id="calGrid" style="display:grid; grid-template-columns:repeat(7,1fr); gap:6px;"></div>
+            </div>
+        </div>
+
+        <div id="semester" class="tab-content">
+            <div class="card" style="max-width: 500px;">
+                <h2>Current Semester</h2>
+                <div id="semesterStatus">Loading...</div>
+            </div>
+            <div class="card" style="max-width: 500px;">
+                <h2>Start a New Semester</h2>
+                <p style="color:#888; font-size:13px;">You can only work inside one semester at a time. A semester automatically archives itself once its end date passes — its subjects, assignments and wellness logs then move into your Profile as read-only history.</p>
+                <label>Start Date</label>
+                <input type="date" id="semStart">
+                <label>End Date</label>
+                <input type="date" id="semEnd">
+                <button class="btn btn-primary" onclick="createSemester()">Start Semester</button>
+                <button class="btn" style="width:100%; margin-top:8px; background:#f72585; color:white;" onclick="endSemesterNow()">End Current Semester Now</button>
+            </div>
+        </div>
+
+        <div id="profile" class="tab-content">
+            <div class="card">
+                <h2>Semester History</h2>
+                <p style="color:#888; font-size:13px;">Past semesters are kept but read-only. Click one below to see its subjects, assignments and wellness logs.</p>
+                <div id="semesterHistoryList"></div>
+            </div>
+            <div id="semesterDetailView"></div>
+        </div>
+    </div>
+
+    <div id="dayModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); align-items:center; justify-content:center; z-index:999;">
+        <div class="card" style="width:400px; max-height:70vh; overflow-y:auto;">
+            <h3 id="dayModalTitle">Tasks</h3>
+            <div id="dayModalBody"></div>
+            <button class="btn" style="width:100%; margin-top:10px; background:#eee;" onclick="closeDayModal()">Close</button>
+        </div>
+    </div>
+
+    <script>
+        const user = localStorage.getItem('activeUser');
+        const role = localStorage.getItem('activeRole') || 'STUDENT';
+        let myChart;
+        let dash = null; // last dashboard payload, reused across tabs
+        let calViewDate = new Date();
+
+        async function init() {
+            if(!user) { window.location.href = 'login.html'; return; }
+            // Only student accounts belong on this page — send faculty/admin to their own dashboard
+            if (role === 'FACULTY') { window.location.href = 'faculty.html'; return; }
+            if (role === 'ADMIN') { window.location.href = 'admin.html'; return; }
+
+            try {
+                const res = await fetch(`${API_BASE}/api/dashboard/${user}`);
+                dash = await res.json();
+
+                document.getElementById('sideName').innerText = "Hello, " + (dash.name || user);
+
+                if (!dash.hasActiveSemester) {
+                    document.getElementById('noSemesterBanner').style.display = 'block';
+                    document.getElementById('overloadBanner').style.display = 'none';
+                    document.getElementById('welcomeTitle').innerText = "No Active Semester";
+                    document.getElementById('riskLabel').style.display = 'none';
+                    document.getElementById('balanceText').innerText = '-';
+                    document.getElementById('workloadText').innerText = '-';
+                    document.getElementById('xpText').innerText = dash.totalXP ?? 0;
+                    renderGraph([]);
+                    renderTasks([]);
+                    populateSubjectDropdown([]);
+                    renderFocusList([]);
+                    renderRecoveryList([]);
+                } else {
+                    document.getElementById('noSemesterBanner').style.display = 'none';
+                    document.getElementById('riskLabel').style.display = 'inline-block';
+                    document.getElementById('welcomeTitle').innerText = `Student Dashboard: ${dash.name} (Sem ${dash.semesterNumber})`;
+                    document.getElementById('balanceText').innerText = dash.balanceScore + "%";
+                    document.getElementById('workloadText').innerText = dash.workloadIndex;
+                    document.getElementById('xpText').innerText = dash.totalXP;
+
+                    const risk = document.getElementById('riskLabel');
+                    risk.innerText = dash.burnoutRisk + " BURNOUT RISK";
+                    risk.className = `status-badge ${dash.burnoutRisk}`;
+                    document.getElementById('overloadBanner').style.display = dash.sustainedOverload ? 'block' : 'none';
+
+                    renderGraph(dash.wellnessLogs || []);
+                    renderTasks(dash.assignments || []);
+                    populateSubjectDropdown(dash.subjectNames || []);
+                    renderFocusList(dash.focusActivities || []);
+                    renderRecoveryList(dash.recoveryActivities || []);
+                    renderCalendar();
+                }
+            } catch (err) { console.error("Sync Error", err); }
+
+            loadSemesterStatus();
+            loadSemesterHistory();
+            loadSubjectsFull();
+        }
+
+        async function submitLog() {
+            const log = {
+                date: new Date().toISOString().split('T')[0],
+                sleepHours: parseFloat(document.getElementById('sleepHrs').value),
+                studyHours: parseFloat(document.getElementById('studyHrs').value),
+                mood: document.getElementById('moodSelect').value,
+                energyLevel: parseInt(document.getElementById('energyLv').value)
+            };
+            const res = await fetch(`${API_BASE}/api/wellness/${user}`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(log)
+            });
+            if (res.ok) {
+                alert("Log Saved Successfully!");
+            } else {
+                const msg = await res.text();
+                alert(msg || "Could not save your log.");
+            }
+            init(); showTab('dashboard', document.querySelector('.sidebar-item'));
+        }
+
+        async function submitTask() {
+            const task = {
+                title: document.getElementById('tTitle').value,
+                subject: document.getElementById('tSub').value,
+                difficulty: document.getElementById('tDiff').value,
+                deadline: document.getElementById('tDeadline').value,
+                priority: parseInt(document.getElementById('tPriority').value) || 1,
+                status: "Pending"
+            };
+            if (!task.subject) return alert("Add a subject first (Subjects tab), then pick it here.");
+            const res = await fetch(`${API_BASE}/api/assignments/${user}`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(task)
+            });
+            if (!res.ok) { alert(await res.text()); }
+            init();
+        }
+
+        function populateSubjectDropdown(names) {
+            const sel = document.getElementById('tSub');
+            if (!sel) return;
+            const prev = sel.value;
+            sel.innerHTML = names.length ? '' : '<option value="">-- add a subject first --</option>';
+            names.forEach(n => {
+                const opt = document.createElement('option');
+                opt.value = n; opt.innerText = n;
+                sel.appendChild(opt);
+            });
+            if (names.includes(prev)) sel.value = prev;
+        }
+
+        function renderTasks(arr) {
+            const list = document.getElementById('taskList');
+            list.innerHTML = '<h3>Assignments & Deadlines</h3>';
+            if (!arr.length) list.innerHTML += '<p style="color:#888;">No assignments yet.</p>';
+            arr.forEach(t => {
+                const isDone = t.status === 'Completed';
+                list.innerHTML += `
+                    <div class="card" style="display:flex; justify-content:space-between; align-items:center; ${isDone ? 'opacity:0.5' : ''}">
+                        <div style="${isDone ? 'text-decoration: line-through' : ''}">
+                            <strong>${t.title}</strong> (${t.subject})<br>
+                            <small>📅 ${t.deadline} | Priority: ${t.priority}</small>
+                        </div>
+                        ${!isDone ? `<button onclick="completeTask('${t.title}')" class="btn-success">Submit</button>` : '✅'}
+                    </div>`;
+            });
+        }
+
+        async function completeTask(title) {
+            await fetch(`${API_BASE}/api/submit-task/${user}?title=${encodeURIComponent(title)}`, { method: 'POST' });
+            init();
+        }
+
+        function renderGraph(logs) {
+            const ctx = document.getElementById('wellnessChart').getContext('2d');
+            if(myChart) myChart.destroy();
+            myChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: logs.map(l => l.date),
+                    datasets: [
+                        { label: 'Sleep', data: logs.map(l => l.sleepHours), borderColor: '#4cc9f0' },
+                        { label: 'Study', data: logs.map(l => l.studyHours), borderColor: '#4361ee' },
+                        { label: 'Stress Index', data: logs.map(l => (100 - (l.sleepHours * 8) + (l.studyHours * 4))),
+                          borderColor: '#f72585', borderDash: [5, 5] }
+                    ]
+                }
+            });
+        }
+
+        // ---------- Subjects & Calibration ----------
+
+        async function addSubject() {
+            const body = {
+                subjectName: document.getElementById('subName').value.trim(),
+                department: document.getElementById('subDept').value.trim(),
+                credits: parseInt(document.getElementById('subCredits').value) || 3
+            };
+            if (!body.subjectName) return alert("Please enter a subject name");
+            const res = await fetch(`${API_BASE}/api/subjects/${user}`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            if (!res.ok) { alert(await res.text()); return; }
+            document.getElementById('subName').value = '';
+            document.getElementById('subDept').value = '';
+            document.getElementById('subCredits').value = '';
+            loadSubjectsFull();
+            init();
+        }
+
+        async function loadSubjectsFull() {
+            try {
+                const res = await fetch(`${API_BASE}/api/subjects/${user}`);
+                const subjects = await res.json();
+
+                const dd = document.getElementById('cSubject');
+                if (dd) {
+                    const prev = dd.value;
+                    dd.innerHTML = subjects.length ? '' : '<option value="">-- add a subject first --</option>';
+                    subjects.forEach(s => {
+                        const opt = document.createElement('option');
+                        opt.value = s.subjectName; opt.innerText = s.subjectName;
+                        dd.appendChild(opt);
+                    });
+                    if (subjects.some(s => s.subjectName === prev)) dd.value = prev;
+                }
+
+                const list = document.getElementById('subjectList');
+                if (!list) return;
+                list.innerHTML = '<h3>Your Subjects This Semester</h3>';
+                if (subjects.length === 0) list.innerHTML += '<p style="color:#888;">No subjects added yet.</p>';
+                subjects.forEach(s => {
+                    list.innerHTML += `
+                        <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <strong>${s.subjectName}</strong> (${s.department || 'N/A'})<br>
+                                <small>Credits: ${s.credits}</small>
+                            </div>
+                            <span class="status-badge ${s.calibrationComplete ? 'LOW' : 'MEDIUM'}">
+                                ${s.calibrationComplete ? 'D_s = ' + s.difficultyCoefficient : 'Calibrating...'}
+                            </span>
+                        </div>`;
+                });
+            } catch (err) { console.error("Subject load error", err); }
+        }
+
+        async function submitCalibration() {
+            const body = {
+                subjectName: document.getElementById('cSubject').value,
+                difficulty: parseInt(document.getElementById('cDifficulty').value) || 3,
+                studyHours: parseFloat(document.getElementById('cHours').value) || 0,
+                weekNumber: parseInt(document.getElementById('cWeek').value)
+            };
+            if (!body.subjectName) return alert("Add a subject first, then pick it here.");
+
+            await fetch(`${API_BASE}/api/calibration/${user}`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(body)
+            });
+            alert("Calibration log recorded!");
+            loadSubjectsFull();
+        }
+
+        // ---------- Focus Activities ----------
+
+        function onFocusPresetChange() {
+            const val = document.getElementById('focusPreset').value;
+            document.getElementById('focusCustomBox').style.display = (val === 'other') ? 'block' : 'none';
+        }
+
+        async function addFocusActivity() {
+            const preset = document.getElementById('focusPreset').value;
+            let name, weight, custom;
+            if (!preset) return alert("Choose a preset or Other");
+            if (preset === 'other') {
+                name = document.getElementById('focusCustomName').value.trim();
+                weight = parseInt(document.getElementById('focusCustomWeight').value);
+                custom = true;
+                if (!name || !weight) return alert("Enter a name and a weight from 1-10");
+            } else {
+                const [n, w] = preset.split('|');
+                name = n; weight = parseInt(w); custom = false;
+            }
+            const res = await fetch(`${API_BASE}/api/focus-activity/${user}`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name, weight, custom })
+            });
+            if (!res.ok) { alert(await res.text()); return; }
+            document.getElementById('focusPreset').value = '';
+            document.getElementById('focusCustomBox').style.display = 'none';
+            init();
+        }
+
+        function renderFocusList(list) {
+            const el = document.getElementById('focusList');
+            if (!el) return;
+            el.innerHTML = '<h3>Your Focus Activities</h3>';
+            if (!list.length) el.innerHTML += '<p style="color:#888;">None added yet — pick one above.</p>';
+            list.forEach(a => {
+                el.innerHTML += `
+                    <div class="card" style="display:flex; justify-content:space-between; align-items:center; ${a.active ? '' : 'opacity:0.5'}">
+                        <div><strong>${a.name}</strong><br><small>Stress weight: ${a.weight}${a.custom ? ' (custom)' : ''}</small></div>
+                        <button class="btn-success" style="background:${a.active ? '#f72585' : '#52c41a'}" onclick="toggleFocus('${a.name}')">${a.active ? 'Pause' : 'Resume'}</button>
+                    </div>`;
+            });
+        }
+
+        async function toggleFocus(name) {
+            await fetch(`${API_BASE}/api/toggle-focus-activity/${user}?name=${encodeURIComponent(name)}`, { method: 'POST' });
+            init();
+        }
+
+        // ---------- Recovery Activities ----------
+
+        function onRecoveryPresetChange() {
+            const val = document.getElementById('recoveryPreset').value;
+            document.getElementById('recoveryCustomBox').style.display = (val === 'other') ? 'block' : 'none';
+        }
+
+        async function addRecoveryActivity() {
+            const preset = document.getElementById('recoveryPreset').value;
+            let name, weight, custom;
+            if (!preset) return alert("Choose a preset or Other");
+            if (preset === 'other') {
+                name = document.getElementById('recoveryCustomName').value.trim();
+                weight = parseInt(document.getElementById('recoveryCustomWeight').value);
+                custom = true;
+                if (!name || !weight) return alert("Enter a name and a weight from 1-10");
+            } else {
+                const [n, w] = preset.split('|');
+                name = n; weight = parseInt(w); custom = false;
+            }
+            const res = await fetch(`${API_BASE}/api/recovery-activity/${user}`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ name, weight, custom })
+            });
+            if (!res.ok) { alert(await res.text()); return; }
+            document.getElementById('recoveryPreset').value = '';
+            document.getElementById('recoveryCustomBox').style.display = 'none';
+            init();
+        }
+
+        function renderRecoveryList(list) {
+            const el = document.getElementById('recoveryList');
+            if (!el) return;
+            el.innerHTML = '<h3>Your Recovery Activities</h3>';
+            if (!list.length) el.innerHTML += '<p style="color:#888;">None added yet — pick one above.</p>';
+            list.forEach(a => {
+                el.innerHTML += `
+                    <div class="card" style="display:flex; justify-content:space-between; align-items:center; ${a.active ? '' : 'opacity:0.5'}">
+                        <div><strong>${a.name}</strong><br><small>Relief weight: ${a.weight}${a.custom ? ' (custom)' : ''}</small></div>
+                        <button class="btn-success" style="background:${a.active ? '#f72585' : '#52c41a'}" onclick="toggleRecovery('${a.name}')">${a.active ? 'Pause' : 'Resume'}</button>
+                    </div>`;
+            });
+        }
+
+        async function toggleRecovery(name) {
+            await fetch(`${API_BASE}/api/toggle-recovery-activity/${user}?name=${encodeURIComponent(name)}`, { method: 'POST' });
+            init();
+        }
+
+        // ---------- Calendar ----------
+
+        function renderCalendar() {
+            const grid = document.getElementById('calGrid');
+            if (!grid) return;
+            const year = calViewDate.getFullYear();
+            const month = calViewDate.getMonth();
+            document.getElementById('calMonthLabel').innerText =
+                calViewDate.toLocaleString('default', { month: 'long' }) + ' ' + year;
+
+            const assignments = (dash && dash.assignments) || [];
+            const byDate = {};
+            assignments.forEach(a => {
+                if (!a.deadline) return;
+                const d = a.deadline.split('T')[0];
+                (byDate[d] = byDate[d] || []).push(a);
+            });
+
+            const firstDay = new Date(year, month, 1);
+            const startOffset = firstDay.getDay();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+            let html = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
+                .map(d => `<div style="font-weight:600; text-align:center; color:#888; font-size:12px;">${d}</div>`).join('');
+
+            for (let i = 0; i < startOffset; i++) html += `<div></div>`;
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateStr = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+                const tasks = byDate[dateStr] || [];
+                html += `<div onclick="openDayModal('${dateStr}')" style="border:1px solid #eee; border-radius:8px; padding:8px; min-height:60px; cursor:pointer; ${tasks.length ? 'background:#fff4e3;' : ''}">
+                    <div style="font-size:13px; font-weight:600;">${day}</div>
+                    ${tasks.length ? `<div style="font-size:11px; color:#ff9f1c;">${tasks.length} task${tasks.length>1?'s':''}</div>` : ''}
+                </div>`;
+            }
+            grid.innerHTML = html;
+        }
+
+        function shiftMonth(delta) {
+            calViewDate.setMonth(calViewDate.getMonth() + delta);
+            renderCalendar();
+        }
+
+        function openDayModal(dateStr) {
+            const assignments = (dash && dash.assignments) || [];
+            const tasks = assignments.filter(a => a.deadline && a.deadline.split('T')[0] === dateStr);
+            document.getElementById('dayModalTitle').innerText = 'Tasks on ' + dateStr;
+            const body = document.getElementById('dayModalBody');
+            body.innerHTML = tasks.length ? tasks.map(t => `
+                <div style="padding:8px 0; border-bottom:1px solid #eee;">
+                    <strong>${t.title}</strong> (${t.subject})<br>
+                    <small>Priority: ${t.priority} | ${t.status}</small>
+                </div>`).join('') : '<p style="color:#888;">No tasks due this day.</p>';
+            document.getElementById('dayModal').style.display = 'flex';
+        }
+
+        function closeDayModal() {
+            document.getElementById('dayModal').style.display = 'none';
+        }
+
+        // ---------- Semester lifecycle ----------
+
+        function loadSemesterStatus() {
+            const box = document.getElementById('semesterStatus');
+            if (!box) return;
+            if (dash && dash.hasActiveSemester) {
+                box.innerHTML = `<p>Semester <strong>${dash.semesterNumber}</strong> is active.<br>
+                    ${dash.semesterStart || '?'} → ${dash.semesterEnd || 'no end date set'}</p>`;
+            } else {
+                box.innerHTML = `<p style="color:#888;">You have no active semester right now. Start one below.</p>`;
+            }
+        }
+
+        async function createSemester() {
+            const startDate = document.getElementById('semStart').value;
+            const endDate = document.getElementById('semEnd').value;
+            if (!startDate || !endDate) return alert("Pick both a start and end date");
+            const res = await fetch(`${API_BASE}/api/semesters/${user}`, {
+                method: 'POST', headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ startDate, endDate })
+            });
+            if (!res.ok) { alert(await res.text()); return; }
+            alert("Semester started!");
+            init();
+        }
+
+        async function endSemesterNow() {
+            if (!confirm("End your current semester now? Its data will move to your Profile as read-only history.")) return;
+            const res = await fetch(`${API_BASE}/api/end-semester/${user}`, { method: 'POST' });
+            const msg = await res.text();
+            alert(msg);
+            init();
+        }
+
+        // ---------- Profile / History ----------
+
+        async function loadSemesterHistory() {
+            try {
+                const res = await fetch(`${API_BASE}/api/semesters/${user}`);
+                const semesters = await res.json();
+                window._semesterCache = semesters;
+                const list = document.getElementById('semesterHistoryList');
+                if (!list) return;
+                list.innerHTML = '';
+                if (!semesters.length) { list.innerHTML = '<p style="color:#888;">No semesters yet.</p>'; return; }
+                semesters.slice().reverse().forEach(s => {
+                    list.innerHTML += `
+                        <div class="card" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="showSemesterDetail(${s.number})">
+                            <div>
+                                <strong>Semester ${s.number}</strong> ${s.active ? '<span class="status-badge LOW">ACTIVE</span>' : '<span class="status-badge" style="background:#eee;color:#888;">ARCHIVED</span>'}<br>
+                                <small>${s.startDate || '?'} → ${s.endDate || '?'}</small>
+                            </div>
+                            <div>${s.finalBalanceScore != null ? 'Final Balance: ' + s.finalBalanceScore + '%' : ''}</div>
+                        </div>`;
+                });
+            } catch (err) { console.error("Semester history load error", err); }
+        }
+
+        function showSemesterDetail(number) {
+            const semesters = window._semesterCache || [];
+            const sem = semesters.find(s => s.number === number);
+            const el = document.getElementById('semesterDetailView');
+            if (!sem || !el) return;
+
+            let html = `<div class="card"><h3>Semester ${sem.number} Detail ${sem.active ? '(active)' : '(read-only)'}</h3>`;
+
+            html += `<h4>Subjects</h4>`;
+            html += (sem.subjectNames && sem.subjectNames.length)
+                ? sem.subjectNames.map(n => `<span class="status-badge MEDIUM" style="margin-right:6px;">${n}</span>`).join('')
+                : '<p style="color:#888;">None</p>';
+
+            html += `<h4 style="margin-top:16px;">Assignments</h4>`;
+            html += (sem.assignments && sem.assignments.length)
+                ? sem.assignments.map(a => `<div style="padding:8px 0; border-bottom:1px solid #eee;">
+                    <strong>${a.title}</strong> (${a.subject}) — ${a.status}<br><small>📅 ${a.deadline}</small></div>`).join('')
+                : '<p style="color:#888;">None</p>';
+
+            html += `<h4 style="margin-top:16px;">Wellness Logs</h4>`;
+            html += (sem.wellnessLogs && sem.wellnessLogs.length)
+                ? sem.wellnessLogs.map(l => `<div style="padding:8px 0; border-bottom:1px solid #eee;">
+                    ${l.date}: Sleep ${l.sleepHours}h, Study ${l.studyHours}h, Mood ${l.mood}, Energy ${l.energyLevel}</div>`).join('')
+                : '<p style="color:#888;">None</p>';
+
+            if (sem.finalBalanceScore != null) {
+                html += `<h4 style="margin-top:16px;">Final Balance Score: ${sem.finalBalanceScore}%</h4>`;
+            }
+
+            html += `</div>`;
+            el.innerHTML = html;
+        }
+
+        function showTab(id, el) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active-content'));
+            document.getElementById(id).classList.add('active-content');
+            document.querySelectorAll('.sidebar-item').forEach(s => s.classList.remove('active-tab'));
+            if(el) el.classList.add('active-tab');
+        }
+
+        function logout() { localStorage.clear(); window.location.href='login.html'; }
+        init();
+    </script>
+</body>
+</html>`
