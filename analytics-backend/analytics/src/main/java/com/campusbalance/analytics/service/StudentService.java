@@ -396,6 +396,144 @@ public class StudentService {
         repository.save(s);
     }
 
+        // ================= Insights (trend forecast + rule-based recommendations) =================
+
+    public Map<String, Object> getInsights(String username) {
+        Student student = repository.findByUsername(username);
+        Map<String, Object> result = new HashMap<>();
+        if (student == null) return result;
+
+        Semester sem = getActiveSemester(student);
+        repository.save(student);
+
+        List<AnalyticsResult> history = analyticsService.getHistoryFor(username);
+        List<AnalyticsResult> recent = history.size() > 14
+                ? history.subList(history.size() - 14, history.size())
+                : history;
+
+        List<Map<String, Object>> trend = new ArrayList<>();
+        for (AnalyticsResult r : recent) {
+            Map<String, Object> point = new HashMap<>();
+            point.put("date", r.getDate());
+            point.put("balanceScore", r.getBalanceScore());
+            point.put("workloadPercent", r.getWorkloadPercent());
+            point.put("burnoutRisk", r.getBurnoutRisk());
+            trend.add(point);
+        }
+        result.put("trend", trend);
+
+        // ---- Forecast: simple linear regression of Balance Score over the recent history ----
+        Map<String, Object> forecast = new HashMap<>();
+        if (recent.size() >= 3) {
+            int n = recent.size();
+            double sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+            for (int i = 0; i < n; i++) {
+                double x = i;
+                double y = recent.get(i).getBalanceScore();
+                sumX += x; sumY += y; sumXY += x * y; sumXX += x * x;
+            }
+            double denom = (n * sumXX - sumX * sumX);
+            double slope = denom == 0 ? 0 : (n * sumXY - sumX * sumY) / denom;
+            double intercept = (sumY - slope * sumX) / n;
+
+            List<Map<String, Object>> projected = new ArrayList<>();
+            for (int d = 1; d <= 7; d++) {
+                double projectedScore = Math.max(0, Math.min(100, intercept + slope * (n - 1 + d)));
+                Map<String, Object> p = new HashMap<>();
+                p.put("dayOffset", d);
+                p.put("projectedBalanceScore", Math.round(projectedScore * 10.0) / 10.0);
+                projected.add(p);
+            }
+            forecast.put("slopePerDay", Math.round(slope * 100.0) / 100.0);
+            forecast.put("trend", slope < -0.5 ? "DECLINING" : slope > 0.5 ? "IMPROVING" : "STABLE");
+            forecast.put("projected", projected);
+
+            double lastScore = recent.get(n - 1).getBalanceScore();
+            if (slope < 0 && lastScore >= 40) {
+                double daysUntilHigh = (40 - lastScore) / slope;
+                if (daysUntilHigh > 0 && daysUntilHigh <= 30) {
+                    forecast.put("daysUntilHighRisk", (int) Math.ceil(daysUntilHigh));
+                }
+            }
+        } else {
+            forecast.put("trend", "INSUFFICIENT_DATA");
+        }
+        result.put("forecast", forecast);
+
+        List<Map<String, Object>> recommendations = new ArrayList<>();
+        if (sem == null) {
+            recommendations.add(insightRec("INFO", "Start a semester from the Semester tab to unlock insights tailored to your current workload."));
+            result.put("hasActiveSemester", false);
+            result.put("recommendations", recommendations);
+            return result;
+        }
+        result.put("hasActiveSemester", true);
+
+        double courseworkLoad = computeCourseworkLoad(student, sem);
+        double focusLoad = sem.getFocusActivities().stream().filter(Activity::isActive).mapToDouble(Activity::getWeight).sum();
+        double recoveryLoad = sem.getRecoveryActivities().stream().filter(Activity::isActive).mapToDouble(Activity::getWeight).sum();
+
+        Map<String, Object> breakdown = new HashMap<>();
+        breakdown.put("courseworkLoad", Math.round(courseworkLoad * 10.0) / 10.0);
+        breakdown.put("focusLoad", focusLoad);
+        breakdown.put("recoveryLoad", recoveryLoad);
+        result.put("breakdown", breakdown);
+
+        double latestBalance = recent.isEmpty() ? 100 : recent.get(recent.size() - 1).getBalanceScore();
+        double latestWorkloadPct = recent.isEmpty() ? 0 : recent.get(recent.size() - 1).getWorkloadPercent();
+        result.put("latestBalanceScore", latestBalance);
+        result.put("latestWorkloadPercent", latestWorkloadPct);
+
+        if (analyticsService.hasSustainedOverload(username)) {
+            recommendations.add(insightRec("HIGH", "Your workload has stayed above 85% of capacity for 3+ days straight. Consider talking to your advisor and pausing a Focus Activity."));
+        }
+
+        if (focusLoad > 0 && recoveryLoad == 0 && latestWorkloadPct > 60) {
+            recommendations.add(insightRec("MEDIUM", "You have Focus Activities pushing your load up but no active Recovery Activities. Add one — even a light one helps offset the stress."));
+        }
+
+        if (focusLoad > 0 && focusLoad > courseworkLoad) {
+            recommendations.add(insightRec("MEDIUM", "Focus Activities are contributing more load right now than your actual coursework. Consider pausing your lowest-priority one for a while."));
+        }
+
+        if (!sem.getWellnessLogs().isEmpty()) {
+            List<WellnessLog> logs = sem.getWellnessLogs();
+            List<WellnessLog> lastFewLogs = logs.size() > 3 ? logs.subList(logs.size() - 3, logs.size()) : logs;
+            double avgSleep = lastFewLogs.stream().mapToDouble(WellnessLog::getSleepHours).average().orElse(8);
+            if (avgSleep < 6) {
+                recommendations.add(insightRec("HIGH", "Your average sleep over your last few logs is under 6 hours. Prioritize rest tonight — sleep debt compounds fast."));
+            }
+        } else {
+            recommendations.add(insightRec("LOW", "Log a wellness check-in to get sleep/energy-aware insights."));
+        }
+
+        String trendDirection = (String) forecast.get("trend");
+        if ("DECLINING".equals(trendDirection)) {
+            Object daysUntilHigh = forecast.get("daysUntilHighRisk");
+            if (daysUntilHigh != null) {
+                recommendations.add(insightRec("HIGH", "Your Balance Score has been trending down. At this rate you could hit HIGH burnout risk in about " + daysUntilHigh + " day(s) — this is a good time to scale back."));
+            } else {
+                recommendations.add(insightRec("MEDIUM", "Your Balance Score has been trending down over your recent logs. Keep an eye on it."));
+            }
+        } else if ("IMPROVING".equals(trendDirection)) {
+            recommendations.add(insightRec("POSITIVE", "Your Balance Score is trending up — whatever you're doing is working. Keep it going."));
+        }
+
+        if (recommendations.isEmpty()) {
+            recommendations.add(insightRec("POSITIVE", "Everything looks balanced right now. No red flags in your current workload or recovery mix."));
+        }
+
+        result.put("recommendations", recommendations);
+        return result;
+    }
+
+    private Map<String, Object> insightRec(String severity, String message) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("severity", severity);
+        m.put("message", message);
+        return m;
+    }
+
     // ================= Auth / Registration =================
 
     // Public signup — always creates a STUDENT account, regardless of what the client sends

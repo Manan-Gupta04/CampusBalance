@@ -21,6 +21,13 @@ public class StudentController {
         return service.getDashboardStats(username);
     }
 
+        // Trend forecast + rule-based recommendations, powers the Insights tab
+    @GetMapping("/insights/{username}")
+    public Map<String, Object> getInsights(@PathVariable String username) {
+        return service.getInsights(username);
+    }
+
+    
     @PostMapping("/register")
     public ResponseEntity<?> register(@RequestBody Student s) {
         boolean created = service.registerStudent(s);

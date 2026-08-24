@@ -40,6 +40,30 @@
         .btn-primary { background: var(--primary); color: white; width: 100%; }
         .btn-success { background: #52c41a; color: white; padding: 8px 15px; border-radius: 5px; cursor: pointer; border:none; }
         .banner { background: #fff4e3; border: 1px solid #ff9f1c; color: #8a5300; padding: 14px 18px; border-radius: 10px; margin-bottom: 20px; font-size: 14px; }
+
+        /* Insights tab */
+        .insight-hero { display:flex; gap:30px; align-items:center; flex-wrap:wrap; }
+        .gauge { position:relative; width:200px; height:200px; border-radius:50%; display:flex; align-items:center; justify-content:center; transition: background 0.8s ease; flex-shrink:0; }
+        .gauge::before { content:''; position:absolute; inset:16px; border-radius:50%; background:var(--card-bg); box-shadow: inset 0 0 15px rgba(0,0,0,0.05); }
+        .gauge-inner { position:relative; z-index:1; text-align:center; }
+        .gauge-inner .big { font-size:40px; font-weight:800; }
+        .gauge-inner .label { font-size:11px; color:#888; text-transform:uppercase; letter-spacing:1px; margin-top:4px; }
+        .insight-side { flex:1; min-width:220px; }
+        .insight-side h2 { margin:0 0 6px 0; font-size:22px; }
+        .forecast-note { font-size:14px; color:#f72585; font-weight:600; margin-top:10px; }
+        .breakdown-tiles { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px,1fr)); gap:16px; margin-bottom:10px; }
+        .breakdown-tile { border-radius:12px; padding:16px; text-align:center; }
+        .bk-coursework { background:#eef1ff; }
+        .bk-focus { background:#ffe9f3; }
+        .bk-recovery { background:#e3fcf7; }
+        .breakdown-tile .num { font-size:26px; font-weight:800; }
+        .breakdown-tile .lbl { font-size:12px; color:#777; text-transform:uppercase; letter-spacing:0.5px; margin-top:4px; }
+        .rec-card { display:flex; gap:12px; align-items:flex-start; padding:16px; border-radius:12px; margin-bottom:10px; border-left:5px solid #ccc; background:#fafafa; font-size:14px; line-height:1.4; }
+        .rec-HIGH { border-left-color:#f72585; background:#fff0f5; }
+        .rec-MEDIUM { border-left-color:#ff9f1c; background:#fff8ec; }
+        .rec-LOW { border-left-color:#4cc9f0; background:#eefbff; }
+        .rec-POSITIVE { border-left-color:#00b894; background:#eafff6; }
+        .rec-INFO { border-left-color:#999; background:#f5f5f5; }
     </style>
 </head>
 <body>
@@ -47,6 +71,7 @@
         <h2>CampusBalance</h2>
         <p id="sideName" style="opacity: 0.7; margin-bottom: 10px;">User Loading...</p>
         <div class="sidebar-item active-tab" onclick="showTab('dashboard', this)">🏠 Dashboard</div>
+        <div class="sidebar-item" onclick="showTab('insights', this)">🔮 Insights</div>
         <div class="sidebar-item" onclick="showTab('logs', this)">📊 Wellness Logs</div>
         <div class="sidebar-item" onclick="showTab('tasks', this)">📅 Assignments</div>
         <div class="sidebar-item" onclick="showTab('subjects', this)">🧪 Subjects</div>
@@ -78,6 +103,47 @@
             <div class="card">
                 <h3>Wellness vs. Stress Trends</h3>
                 <canvas id="wellnessChart"></canvas>
+            </div>
+        </div>
+
+        <div id="insights" class="tab-content">
+            <div id="insightNoSemester" class="banner" style="display:none; background:#e3fcf7; border-color:#4cc9f0; color:#00707a;">
+                📚 Start a semester to unlock insights built around your current workload — trend/forecast data below still works off your history.
+            </div>
+            <div class="card">
+                <div class="insight-hero">
+                    <div id="insightGauge" class="gauge">
+                        <div class="gauge-inner">
+                            <div class="big" id="insightGaugeScore">0%</div>
+                            <div class="label">Balance Score</div>
+                        </div>
+                    </div>
+                    <div class="insight-side">
+                        <h2>How you're trending</h2>
+                        <div id="insightTrendLabel" style="font-size:18px; font-weight:700;">Not enough data yet</div>
+                        <div id="insightForecastNote" class="forecast-note"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Balance Score: History &amp; 7-Day Forecast</h3>
+                <canvas id="insightTrendChart"></canvas>
+            </div>
+
+            <div class="card">
+                <h3>What's Driving Your Workload</h3>
+                <div class="breakdown-tiles">
+                    <div class="breakdown-tile bk-coursework"><div class="num" id="bkCoursework">0</div><div class="lbl">Coursework Load</div></div>
+                    <div class="breakdown-tile bk-focus"><div class="num" id="bkFocus">+0</div><div class="lbl">Focus Activities</div></div>
+                    <div class="breakdown-tile bk-recovery"><div class="num" id="bkRecovery">-0</div><div class="lbl">Recovery Relief</div></div>
+                </div>
+                <canvas id="insightBreakdownChart" height="90"></canvas>
+            </div>
+
+            <div class="card">
+                <h3>Recommendations</h3>
+                <div id="recommendationsList"></div>
             </div>
         </div>
 
@@ -313,6 +379,110 @@
             loadSemesterStatus();
             loadSemesterHistory();
             loadSubjectsFull();
+            loadInsights();
+        }
+
+        // ---------- Insights ----------
+
+        let insightsTrendChart, insightsBreakdownChart;
+
+        function riskColor(score) {
+            if (score >= 70) return '#00b894';
+            if (score >= 40) return '#ff9f1c';
+            return '#f72585';
+        }
+
+        async function loadInsights() {
+            try {
+                const res = await fetch(`${API_BASE}/api/insights/${user}`);
+                const data = await res.json();
+                renderInsights(data);
+            } catch (err) { console.error("Insights load error", err); }
+        }
+
+        function renderInsights(data) {
+            const trendHistory = data.trend || [];
+            const score = data.latestBalanceScore ?? (trendHistory.length ? trendHistory[trendHistory.length - 1].balanceScore : 0);
+            const color = riskColor(score);
+
+            const gauge = document.getElementById('insightGauge');
+            if (gauge) gauge.style.background = `conic-gradient(${color} ${score}%, #e9ecef ${score}%)`;
+            const gaugeScore = document.getElementById('insightGaugeScore');
+            if (gaugeScore) gaugeScore.innerText = Math.round(score) + '%';
+
+            const forecast = data.forecast || {};
+            let trendLabel = 'Not enough data yet — log a few more days';
+            let trendColor = '#888';
+            if (forecast.trend === 'DECLINING') { trendLabel = '📉 Declining'; trendColor = '#f72585'; }
+            else if (forecast.trend === 'IMPROVING') { trendLabel = '📈 Improving'; trendColor = '#00b894'; }
+            else if (forecast.trend === 'STABLE') { trendLabel = '➡️ Stable'; trendColor = '#4361ee'; }
+            const trendEl = document.getElementById('insightTrendLabel');
+            if (trendEl) { trendEl.innerText = trendLabel; trendEl.style.color = trendColor; }
+
+            const forecastNote = document.getElementById('insightForecastNote');
+            if (forecastNote) {
+                forecastNote.innerText = forecast.daysUntilHighRisk
+                    ? `⚠️ At this rate, HIGH burnout risk in about ${forecast.daysUntilHighRisk} day(s).`
+                    : '';
+            }
+
+            document.getElementById('insightNoSemester').style.display = data.hasActiveSemester ? 'none' : 'block';
+
+            // Trend + forecast chart
+            const labels = trendHistory.map(h => h.date);
+            const scores = trendHistory.map(h => h.balanceScore);
+            const projected = forecast.projected || [];
+            const projLabels = projected.map(p => '+' + p.dayOffset + 'd');
+            const fullLabels = labels.concat(projLabels);
+            const actualData = scores.concat(projected.map(() => null));
+            const projectedData = labels.map(() => null);
+            if (projected.length && scores.length) {
+                projectedData[projectedData.length - 1] = scores[scores.length - 1];
+            }
+            projected.forEach(p => projectedData.push(p.projectedBalanceScore));
+
+            const ctx = document.getElementById('insightTrendChart');
+            if (ctx) {
+                if (insightsTrendChart) insightsTrendChart.destroy();
+                insightsTrendChart = new Chart(ctx.getContext('2d'), {
+                    type: 'line',
+                    data: {
+                        labels: fullLabels,
+                        datasets: [
+                            { label: 'Balance Score', data: actualData, borderColor: '#4361ee', spanGaps: false },
+                            { label: 'Projected', data: projectedData, borderColor: '#f72585', borderDash: [6, 6], spanGaps: false }
+                        ]
+                    },
+                    options: { scales: { y: { min: 0, max: 100 } } }
+                });
+            }
+
+            // Breakdown
+            const b = data.breakdown || { courseworkLoad: 0, focusLoad: 0, recoveryLoad: 0 };
+            document.getElementById('bkCoursework').innerText = b.courseworkLoad;
+            document.getElementById('bkFocus').innerText = '+' + b.focusLoad;
+            document.getElementById('bkRecovery').innerText = '-' + b.recoveryLoad;
+
+            const bctx = document.getElementById('insightBreakdownChart');
+            if (bctx) {
+                if (insightsBreakdownChart) insightsBreakdownChart.destroy();
+                insightsBreakdownChart = new Chart(bctx.getContext('2d'), {
+                    type: 'bar',
+                    data: {
+                        labels: ['Coursework', 'Focus Activities', 'Recovery Relief'],
+                        datasets: [{ data: [b.courseworkLoad, b.focusLoad, b.recoveryLoad], backgroundColor: ['#4361ee', '#f72585', '#00b894'] }]
+                    },
+                    options: { indexAxis: 'y', plugins: { legend: { display: false } } }
+                });
+            }
+
+            // Recommendations
+            const list = document.getElementById('recommendationsList');
+            list.innerHTML = '';
+            (data.recommendations || []).forEach(r => {
+                const icon = r.severity === 'HIGH' ? '🚨' : r.severity === 'MEDIUM' ? '⚠️' : r.severity === 'POSITIVE' ? '✅' : r.severity === 'LOW' ? 'ℹ️' : '💬';
+                list.innerHTML += `<div class="rec-card rec-${r.severity}"><div style="font-size:20px;">${icon}</div><div>${r.message}</div></div>`;
+            });
         }
 
         async function submitLog() {
@@ -740,4 +910,4 @@
         init();
     </script>
 </body>
-</html>`
+</html>
