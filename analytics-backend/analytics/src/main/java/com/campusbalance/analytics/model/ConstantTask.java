@@ -5,7 +5,7 @@ import lombok.NoArgsConstructor;
 
 @Data
 @NoArgsConstructor
-@AllArgsConstructor
+@AllArgsConstructor 
 public class ConstantTask {
     private String taskName; // e.g., "DSA", "Web Dev"
     private int stressWeight; // Static stress value (e.g., 5)
