@@ -90,17 +90,24 @@ class AnalyticsServiceTest {
 
     @Test
     void sustainedOverloadNeedsThreeConsecutiveOverloadedDays() {
-        LocalDate d = LocalDate.of(2026, 10, 1);
-        when(analyticsResultRepository.findByUsernameOrderByDateAsc("alice")).thenReturn(List.of(
-                snapshot(d, 90), snapshot(d.plusDays(1), 95), snapshot(d.plusDays(2), 88)));
+        LocalDate d = LocalDate.of(2026, 10, 10);
+        when(analyticsResultRepository.findTop3ByUsernameOrderByDateDesc("alice")).thenReturn(List.of(
+                snapshot(d, 90), snapshot(d.minusDays(1), 95), snapshot(d.minusDays(2), 88)));
         assertThat(service.hasSustainedOverload("alice")).isTrue();
     }
 
     @Test
     void overloadWithAGapIsNotSustained() {
-        LocalDate d = LocalDate.of(2026, 10, 1);
-        when(analyticsResultRepository.findByUsernameOrderByDateAsc("alice")).thenReturn(List.of(
-                snapshot(d, 90), snapshot(d.plusDays(1), 95), snapshot(d.plusDays(5), 88)));
+        LocalDate d = LocalDate.of(2026, 10, 10);
+        when(analyticsResultRepository.findTop3ByUsernameOrderByDateDesc("alice")).thenReturn(List.of(
+                snapshot(d, 90), snapshot(d.minusDays(4), 95), snapshot(d.minusDays(5), 88)));
         assertThat(service.hasSustainedOverload("alice")).isFalse();
+    }
+
+    @Test
+    void oneNormalDayBreaksTheOverload() {
+        LocalDate d = LocalDate.of(2026, 10, 10);
+        assertThat(AnalyticsService.isSustainedOverload(List.of(
+                snapshot(d, 90), snapshot(d.minusDays(1), 60), snapshot(d.minusDays(2), 88)))).isFalse();
     }
 }

@@ -30,6 +30,8 @@ The demo database holds **synthetic** data (150 generated students) — see [Dem
 
 **Admin** — creates faculty accounts; semester report (risk distribution, averages) and department comparison
 
+**Everyone** — change your own password from the sidebar; works on phones (collapsible menu)
+
 ## How the scores work
 
 | Quantity | Formula |
@@ -125,6 +127,7 @@ All `/api` routes except login/sign-up need an `Authorization: Bearer <token>` h
 | Access | Endpoints |
 |---|---|
 | Public | `POST /api/login` · `POST /api/register` · `GET /api/admin-exists` · `POST /api/register-admin` (only until an admin exists) |
+| Any logged-in account | `POST /api/change-password` |
 | Student (own data) | `GET /api/dashboard/{username}` · `GET /api/insights/{username}` · `GET, POST /api/semesters/{username}` · `POST /api/end-semester/{username}` · `GET, POST /api/subjects/{username}` · `POST /api/calibration/{username}` · `POST /api/focus-activity/{username}` · `POST /api/recovery-activity/{username}` · `POST /api/toggle-focus-activity/{username}?name=` · `POST /api/toggle-recovery-activity/{username}?name=` · `POST /api/wellness/{username}` · `POST /api/assignments/{username}` · `POST /api/submit-task/{username}?id=` |
 | Faculty, Admin | `GET /api/faculty/heatmap?department=` · `GET /api/faculty/high-risk` |
 | Admin | `POST /api/admin/create-faculty` · `GET /api/admin/report/{semester}` · `GET /api/admin/trends` |

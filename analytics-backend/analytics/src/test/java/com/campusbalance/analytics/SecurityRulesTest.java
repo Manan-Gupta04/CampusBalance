@@ -16,6 +16,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -78,6 +79,18 @@ class SecurityRulesTest {
 
         mvc.perform(get("/api/admin/trends").header("Authorization", faculty)).andExpect(status().isForbidden());
         mvc.perform(get("/api/admin/trends").header("Authorization", admin)).andExpect(status().isOk());
+    }
+
+    @Test
+    void changePasswordNeedsLoginAndAppliesToTheTokenOwner() throws Exception {
+        String body = "{\"currentPassword\":\"old-pass-1\",\"newPassword\":\"new-pass-123\"}";
+        mvc.perform(post("/api/change-password").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isUnauthorized());
+
+        mvc.perform(post("/api/change-password").header("Authorization", tokenFor("fran", "FACULTY"))
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isOk());
+        verify(studentService).changePassword("fran", "old-pass-1", "new-pass-123");
     }
 
     @Test

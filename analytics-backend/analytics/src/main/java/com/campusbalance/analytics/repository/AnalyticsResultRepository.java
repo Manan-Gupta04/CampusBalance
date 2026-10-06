@@ -10,6 +10,6 @@ import java.util.Optional;
 public interface AnalyticsResultRepository extends MongoRepository<AnalyticsResult, String> {
     List<AnalyticsResult> findByUsernameOrderByDateAsc(String username);
     Optional<AnalyticsResult> findFirstByUsernameAndDate(String username, String date);
-    Optional<AnalyticsResult> findFirstByUsernameOrderByDateDesc(String username);
+    List<AnalyticsResult> findTop3ByUsernameOrderByDateDesc(String username);
     List<AnalyticsResult> findByCurrentSemester(int currentSemester);
 }

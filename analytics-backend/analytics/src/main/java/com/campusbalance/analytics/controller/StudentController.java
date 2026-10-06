@@ -1,6 +1,7 @@
 package com.campusbalance.analytics.controller;
 
 import com.campusbalance.analytics.dto.AccountRequest;
+import com.campusbalance.analytics.dto.ChangePasswordRequest;
 import com.campusbalance.analytics.dto.LoginRequest;
 import com.campusbalance.analytics.dto.LoginResponse;
 import com.campusbalance.analytics.model.*;
@@ -10,6 +11,7 @@ import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
@@ -56,6 +58,13 @@ public class StudentController {
     @GetMapping("/admin-exists")
     public boolean adminExists() {
         return service.adminExists();
+    }
+
+    // Changes the logged-in account's own password (any role)
+    @PostMapping("/change-password")
+    public String changePassword(Authentication authentication, @Valid @RequestBody ChangePasswordRequest request) {
+        service.changePassword(authentication.getName(), request.currentPassword(), request.newPassword());
+        return "Password changed";
     }
 
     // One-time setup route — only works until the first admin account is created, then always 409s

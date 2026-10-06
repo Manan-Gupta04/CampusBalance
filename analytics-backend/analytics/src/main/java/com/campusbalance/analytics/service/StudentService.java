@@ -529,6 +529,19 @@ public class StudentService {
         return null;
     }
 
+    // Any logged-in account (student, faculty or admin) can change its own password
+    public void changePassword(String username, String currentPassword, String newPassword) {
+        Student account = requireStudent(username);
+        if (account.getPassword() == null || !passwordEncoder.matches(currentPassword, account.getPassword())) {
+            throw ApiException.badRequest("Your current password is incorrect");
+        }
+        if (currentPassword.equals(newPassword)) {
+            throw ApiException.badRequest("The new password must be different from the current one");
+        }
+        account.setPassword(passwordEncoder.encode(newPassword));
+        repository.save(account);
+    }
+
     // Public signup — always creates a STUDENT account
     public boolean registerStudent(AccountRequest request) {
         return createAccount(request, "STUDENT");

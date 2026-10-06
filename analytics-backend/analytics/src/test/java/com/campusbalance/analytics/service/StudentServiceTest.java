@@ -13,6 +13,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.time.LocalDate;
 import java.util.Map;
@@ -20,7 +21,9 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
 class StudentServiceTest {
@@ -33,6 +36,9 @@ class StudentServiceTest {
 
     @Mock
     private AnalyticsService analyticsService;
+
+    @Mock
+    private PasswordEncoder passwordEncoder;
 
     @InjectMocks
     private StudentService service;
@@ -138,6 +144,28 @@ class StudentServiceTest {
 
         assertThatThrownBy(() -> service.createSemester("alice", request))
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
+    }
+
+    @Test
+    void changePasswordNeedsTheCurrentPassword() {
+        student.setPassword("old-hash");
+        when(passwordEncoder.matches("wrong", "old-hash")).thenReturn(false);
+
+        assertThatThrownBy(() -> service.changePassword("alice", "wrong", "brand-new-pass"))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
+        verify(repository, never()).save(student);
+    }
+
+    @Test
+    void changePasswordStoresTheNewHash() {
+        student.setPassword("old-hash");
+        when(passwordEncoder.matches("old-pass", "old-hash")).thenReturn(true);
+        when(passwordEncoder.encode("brand-new-pass")).thenReturn("new-hash");
+
+        service.changePassword("alice", "old-pass", "brand-new-pass");
+
+        assertThat(student.getPassword()).isEqualTo("new-hash");
+        verify(repository).save(student);
     }
 
     @Test

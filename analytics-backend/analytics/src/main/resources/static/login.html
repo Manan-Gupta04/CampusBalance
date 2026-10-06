@@ -2,58 +2,44 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>CampusBalance | Secure Login</title>
-    <script src="config.js"></script>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CampusBalance | Student Login</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
     <script src="app.js"></script>
-    <style>
-        :root { --primary: #4361ee; --dark: #1a1a2e; }
-        body { background: var(--dark); display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', sans-serif; margin: 0; }
-        .card { background: white; padding: 40px; border-radius: 20px; width: 350px; box-shadow: 0 20px 50px rgba(0,0,0,0.3); text-align: center;}
-        h1 { color: var(--primary); margin: 0 0 10px 0; font-size: 26px; }
-        p { color: #666; font-size: 14px; margin-bottom: 25px; }
-        .input-group { text-align: left; margin-bottom: 15px; }
-        label { font-size: 12px; font-weight: bold; color: #555; margin-left: 5px; }
-        input, select { width: 100%; padding: 12px; margin-top: 5px; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; font-size: 14px; }
-        .btn { width: 100%; padding: 12px; cursor: pointer; border: none; border-radius: 8px; font-weight: 600; margin-top: 10px; transition: 0.3s; }
-        .btn-login { background: var(--primary); color: white; margin-top: 20px; }
-        .btn-login:hover { background: #3046bc; transform: translateY(-2px); }
-        .btn-reg { background: transparent; color: var(--primary); border: 1px solid var(--primary); font-size: 13px; margin-top: 15px;}
-        .btn-reg:hover { background: #f0f2ff; }
-        .divider { margin: 20px 0; border-top: 1px solid #eee; position: relative; }
-        .divider span { position: absolute; top: -10px; background: white; padding: 0 10px; left: 50%; transform: translateX(-50%); font-size: 12px; color: #999;}
-    </style>
 </head>
 <body>
-    <div class="card">
-        <h1>CampusBalance</h1>
-        <p>Student Well-being Analytics</p>
+    <div class="auth-page">
+        <div class="auth-card">
+            <h1>CampusBalance</h1>
+            <p class="subtitle" id="subtitle">Student Well-being Analytics</p>
 
-        <div class="input-group">
-            <label>USERNAME / COLLEGE ID</label>
-            <input type="text" id="uid" placeholder="e.g. cs23001">
+            <form id="authForm">
+                <label for="uid">Username / College ID</label>
+                <input type="text" id="uid" placeholder="e.g. cs23001" autocomplete="username" required>
+
+                <div id="regFields" hidden>
+                    <label for="uname">Full name</label>
+                    <input type="text" id="uname" placeholder="Enter your name" autocomplete="name">
+                    <label for="udept">Department</label>
+                    <input type="text" id="udept" placeholder="e.g. CSE">
+                </div>
+
+                <label for="psw">Password</label>
+                <input type="password" id="psw" placeholder="••••••••" autocomplete="current-password" required>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary btn-block" id="mainBtn">Log In</button>
+                </div>
+            </form>
+
+            <div class="divider"><span>or</span></div>
+            <button class="btn btn-outline btn-block" id="toggleBtn" onclick="toggleMode()">Create a student account</button>
+
+            <p class="auth-footer">Faculty or admin? <a href="staff-login.html">Staff login</a></p>
         </div>
-
-        <div id="regFields" style="display: none;">
-            <div class="input-group">
-                <label>FULL NAME</label>
-                <input type="text" id="uname" placeholder="Enter your name">
-            </div>
-            <div class="input-group">
-                <label>DEPARTMENT</label>
-                <input type="text" id="udept" placeholder="e.g. CSE">
-            </div>
-        </div>
-
-        <div class="input-group">
-            <label>PASSWORD</label>
-            <input type="password" id="psw" placeholder="••••••••">
-        </div>
-
-        <button class="btn btn-login" id="mainBtn" onclick="handleAuth()">Enter Dashboard</button>
-
-        <div class="divider"><span>OR</span></div>
-
-        <button class="btn btn-reg" id="toggleBtn" onclick="toggleMode()">Create New Account</button>
     </div>
 
     <script>
@@ -61,65 +47,41 @@
 
         function toggleMode() {
             isRegisterMode = !isRegisterMode;
-            const regFields = document.getElementById('regFields');
-            const mainBtn = document.getElementById('mainBtn');
-            const toggleBtn = document.getElementById('toggleBtn');
-
-            if (isRegisterMode) {
-                regFields.style.display = 'block';
-                mainBtn.innerText = "Finalize Registration";
-                toggleBtn.innerText = "Back to Login";
-            } else {
-                regFields.style.display = 'none';
-                mainBtn.innerText = "Enter Dashboard";
-                toggleBtn.innerText = "Create New Account";
-            }
+            document.getElementById('regFields').hidden = !isRegisterMode;
+            document.getElementById('subtitle').innerText = isRegisterMode ? 'Create your student account' : 'Student Well-being Analytics';
+            document.getElementById('mainBtn').innerText = isRegisterMode ? 'Create Account' : 'Log In';
+            document.getElementById('toggleBtn').innerText = isRegisterMode ? 'Back to login' : 'Create a student account';
+            document.getElementById('psw').autocomplete = isRegisterMode ? 'new-password' : 'current-password';
         }
 
-        async function handleAuth() {
+        async function register(username, password) {
+            const name = document.getElementById('uname').value.trim();
+            const department = document.getElementById('udept').value.trim();
+            if (!name) return toast('Please enter your name', 'error');
+
+            // This page only ever creates STUDENT accounts — the backend enforces that too.
+            const res = await api('/api/register', { method: 'POST', auth: false, body: { username, name, password, department } });
+            if (!res.ok) return toast(await errorText(res, 'Registration failed.'), 'error');
+            toast('Account created! You can log in now.', 'success');
+            toggleMode();
+        }
+
+        async function login(username, password) {
+            Session.clear(); // drop any old/expired login before starting a new one
+            const res = await api('/api/login', { method: 'POST', auth: false, body: { username, password } });
+            if (!res.ok) return toast('Incorrect username or password', 'error');
+            const account = await res.json();
+            Session.save(account);
+            window.location.href = HOME_PAGE_BY_ROLE[account.role] || 'index.html';
+        }
+
+        document.getElementById('authForm').addEventListener('submit', e => {
+            e.preventDefault();
             const username = document.getElementById('uid').value.trim();
             const password = document.getElementById('psw').value;
-
-            if (!username || !password) return alert("Please fill in your ID and password");
-
-            if (isRegisterMode) {
-                const name = document.getElementById('uname').value.trim();
-                const department = document.getElementById('udept').value.trim();
-                if (!name) return alert("Please enter your name");
-
-                try {
-                    // This page only ever creates STUDENT accounts — the backend enforces that too.
-                    const response = await fetch(`${API_BASE}/api/register`, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ username, name, password, department })
-                    });
-                    if (response.ok) { alert("Registered! Now login."); toggleMode(); }
-                    else { alert(await response.text() || "Registration failed."); }
-                } catch (err) {
-                    alert("Could not reach the server. Is the backend running?");
-                }
-            } else {
-                try {
-                    Session.clear(); // drop any old/expired login before starting a new one
-                    const response = await fetch(`${API_BASE}/api/login`, {
-                        method: 'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({ username, password })
-                    });
-
-                    if (response.ok) {
-                        const login = await response.json();
-                        Session.save(login);
-                        window.location.href = HOME_PAGE_BY_ROLE[login.role] || 'index.html';
-                    } else {
-                        alert("Login Failed: Incorrect ID or Password");
-                    }
-                } catch (err) {
-                    alert("Could not reach the server. Is the backend running?");
-                }
-            }
-        }
+            if (!username || !password) return toast('Please fill in your ID and password', 'error');
+            withBusy(e.submitter, () => isRegisterMode ? register(username, password) : login(username, password));
+        });
     </script>
 </body>
 </html>

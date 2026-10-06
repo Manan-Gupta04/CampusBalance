@@ -3,7 +3,12 @@ package com.campusbalance.analytics.service;
 import com.campusbalance.analytics.dto.CalibrationRequest;
 import com.campusbalance.analytics.model.*;
 import com.campusbalance.analytics.repository.*;
+import lombok.Data;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.annotation.Id;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.aggregation.Aggregation;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
@@ -28,6 +33,9 @@ public class AnalyticsService {
 
     @Autowired
     private StudentRepository studentRepository;
+
+    @Autowired
+    private MongoTemplate mongoTemplate;
 
     // ---------- Calibration Phase ----------
 
@@ -125,21 +133,45 @@ public class AnalyticsService {
         return analyticsResultRepository.findByUsernameOrderByDateAsc(username);
     }
 
-    private AnalyticsResult latestSnapshot(String username) {
-        return analyticsResultRepository.findFirstByUsernameOrderByDateDesc(username).orElse(null);
+    /** One user's most recent snapshots, newest first, as returned by the aggregation below. */
+    @Data
+    public static class RecentSnapshots {
+        @Id
+        private String username;
+        private List<AnalyticsResult> snapshots;
+    }
+
+    // Every user's 3 most recent snapshots (newest first) in a single query, instead of one query
+    // per student — the faculty and admin views list the whole campus at once.
+    private Map<String, List<AnalyticsResult>> recentSnapshotsByUser() {
+        Aggregation aggregation = Aggregation.newAggregation(
+                Aggregation.sort(Sort.by(Sort.Order.asc("username"), Sort.Order.desc("date"))),
+                Aggregation.group("username").push(Aggregation.ROOT).as("snapshots"),
+                Aggregation.project().and("snapshots").slice(3).as("snapshots"));
+        Map<String, List<AnalyticsResult>> byUser = new HashMap<>();
+        mongoTemplate.aggregate(aggregation, AnalyticsResult.class, RecentSnapshots.class)
+                .forEach(r -> byUser.put(r.getUsername(), r.getSnapshots()));
+        return byUser;
+    }
+
+    private static AnalyticsResult newest(List<AnalyticsResult> newestFirst) {
+        return newestFirst == null || newestFirst.isEmpty() ? null : newestFirst.get(0);
+    }
+
+    public boolean hasSustainedOverload(String username) {
+        return isSustainedOverload(analyticsResultRepository.findTop3ByUsernameOrderByDateDesc(username));
     }
 
     // Workload above 85% of capacity on each of the last 3 snapshots, and those were 3 consecutive days
     // (snapshots only exist for days the student opened the app, so gaps don't count as "straight").
-    public boolean hasSustainedOverload(String username) {
-        List<AnalyticsResult> history = analyticsResultRepository.findByUsernameOrderByDateAsc(username);
-        if (history.size() < 3) return false;
-        List<AnalyticsResult> lastThree = history.subList(history.size() - 3, history.size());
+    static boolean isSustainedOverload(List<AnalyticsResult> newestFirst) {
+        if (newestFirst == null || newestFirst.size() < 3) return false;
+        List<AnalyticsResult> lastThree = newestFirst.subList(0, 3);
         if (!lastThree.stream().allMatch(r -> r.getWorkloadPercent() > 85)) return false;
 
-        LocalDate first = LocalDate.parse(lastThree.get(0).getDate());
+        LocalDate newestDate = LocalDate.parse(lastThree.get(0).getDate());
         for (int i = 1; i < lastThree.size(); i++) {
-            if (!LocalDate.parse(lastThree.get(i).getDate()).equals(first.plusDays(i))) return false;
+            if (!LocalDate.parse(lastThree.get(i).getDate()).equals(newestDate.minusDays(i))) return false;
         }
         return true;
     }
@@ -150,10 +182,11 @@ public class AnalyticsService {
         List<Student> students = (department == null || department.isBlank())
                 ? studentRepository.findByRole("STUDENT")
                 : studentRepository.findByRoleAndDepartment("STUDENT", Departments.normalize(department));
+        Map<String, List<AnalyticsResult>> recent = recentSnapshotsByUser();
 
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Student s : students) {
-            AnalyticsResult latest = latestSnapshot(s.getUsername());
+            AnalyticsResult latest = newest(recent.get(s.getUsername()));
             Map<String, Object> row = new HashMap<>();
             row.put("name", s.getName());
             row.put("username", s.getUsername());
@@ -180,17 +213,19 @@ public class AnalyticsService {
 
     public List<Map<String, Object>> getHighRiskStudents() {
         List<Student> students = studentRepository.findByRole("STUDENT");
+        Map<String, List<AnalyticsResult>> recent = recentSnapshotsByUser();
         List<Map<String, Object>> result = new ArrayList<>();
 
         for (Student s : students) {
-            AnalyticsResult latest = latestSnapshot(s.getUsername());
+            List<AnalyticsResult> snapshots = recent.get(s.getUsername());
+            AnalyticsResult latest = newest(snapshots);
             if (latest != null && "HIGH".equals(latest.getBurnoutRisk())) {
                 Map<String, Object> row = new HashMap<>();
                 row.put("name", s.getName());
                 row.put("username", s.getUsername());
                 row.put("department", s.getDepartment());
                 row.put("balanceScore", latest.getBalanceScore());
-                row.put("sustainedOverload", hasSustainedOverload(s.getUsername()));
+                row.put("sustainedOverload", isSustainedOverload(snapshots));
                 result.add(row);
             }
         }
@@ -231,11 +266,12 @@ public class AnalyticsService {
         Map<String, List<Student>> byDept = students.stream()
                 .collect(Collectors.groupingBy(s -> s.getDepartment() == null || s.getDepartment().isBlank() ? "Unassigned" : s.getDepartment()));
 
+        Map<String, List<AnalyticsResult>> recent = recentSnapshotsByUser();
         List<Map<String, Object>> trends = new ArrayList<>();
         for (Map.Entry<String, List<Student>> entry : byDept.entrySet()) {
             List<Double> scores = new ArrayList<>();
             for (Student s : entry.getValue()) {
-                AnalyticsResult latest = latestSnapshot(s.getUsername());
+                AnalyticsResult latest = newest(recent.get(s.getUsername()));
                 if (latest != null) scores.add(latest.getBalanceScore());
             }
             double avg = scores.stream().mapToDouble(Double::doubleValue).average().orElse(0);
