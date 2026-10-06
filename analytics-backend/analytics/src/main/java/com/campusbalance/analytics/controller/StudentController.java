@@ -61,6 +61,12 @@ public class StudentController {
         return service.adminExists();
     }
 
+    // The fixed department list, for the sign-up and staff dropdowns
+    @GetMapping("/departments")
+    public List<Departments.Department> departments() {
+        return Departments.ALL;
+    }
+
     // Changes the logged-in account's own password (any role)
     @PostMapping("/change-password")
     public String changePassword(Authentication authentication, @Valid @RequestBody ChangePasswordRequest request) {

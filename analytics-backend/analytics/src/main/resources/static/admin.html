@@ -61,8 +61,8 @@
             <input type="text" id="fUsername" autocomplete="off" required>
             <label for="fName">Full name</label>
             <input type="text" id="fName" required>
-            <label for="fDept">Department</label>
-            <input type="text" id="fDept" placeholder="e.g. CSE">
+            <label for="fDept">Department (they will only see this department's students)</label>
+            <select id="fDept" required></select>
             <label for="fPassword">Password (at least 8 characters)</label>
             <input type="password" id="fPassword" autocomplete="new-password" minlength="8" required>
             <div class="form-actions">
@@ -127,7 +127,7 @@
             const body = {
                 username: document.getElementById('fUsername').value.trim(),
                 name: document.getElementById('fName').value.trim(),
-                department: document.getElementById('fDept').value.trim(),
+                department: document.getElementById('fDept').value,
                 password: document.getElementById('fPassword').value
             };
             withBusy(e.submitter, async () => {
@@ -140,6 +140,7 @@
 
         if (requireRole('ADMIN')) {
             document.getElementById('sideName').innerText = Session.user;
+            fillDepartmentSelect(document.getElementById('fDept'), { placeholder: 'Choose a department…' });
             loadSemesterReport();
             loadDepartmentTrends();
         }

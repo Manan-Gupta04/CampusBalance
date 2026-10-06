@@ -24,7 +24,7 @@
                     <label for="uname">Full name</label>
                     <input type="text" id="uname" placeholder="Enter your name" autocomplete="name">
                     <label for="udept">Department</label>
-                    <input type="text" id="udept" placeholder="e.g. CSE">
+                    <select id="udept"></select>
                 </div>
 
                 <label for="psw">Password</label>
@@ -47,6 +47,7 @@
 
         function toggleMode() {
             isRegisterMode = !isRegisterMode;
+            if (isRegisterMode) fillDepartmentSelect(document.getElementById('udept'));
             document.getElementById('regFields').hidden = !isRegisterMode;
             document.getElementById('subtitle').innerText = isRegisterMode ? 'Create your student account' : 'Student Well-being Analytics';
             document.getElementById('mainBtn').innerText = isRegisterMode ? 'Create Account' : 'Log In';
@@ -56,8 +57,9 @@
 
         async function register(username, password) {
             const name = document.getElementById('uname').value.trim();
-            const department = document.getElementById('udept').value.trim();
+            const department = document.getElementById('udept').value;
             if (!name) return toast('Please enter your name', 'error');
+            if (!department) return toast('Please choose your department', 'error');
 
             // This page only ever creates STUDENT accounts — the backend enforces that too.
             const res = await api('/api/register', { method: 'POST', auth: false, body: { username, name, password, department } });

@@ -39,8 +39,12 @@ The demo database holds **synthetic** data (150 generated students) — see [Dem
   goals tracked from check-ins · Tier 3: a counsellor referral (routine tips are suppressed) plus a printable
   **summary report** the student can share
 
-**Faculty** — class stress heatmap (filterable by department) and a high-risk watchlist sorted by intervention tier,
-with each student's burnout signals and 14-day Balance Score trend
+**Faculty** — class stress heatmap and a high-risk watchlist sorted by intervention tier, with each student's burnout
+signals and 14-day Balance Score trend. Each faculty member only sees students from their own department (enforced
+on the server); admins see every department.
+
+**Departments** are picked from a fixed list (CSE, IT, ECE, EEE, ME, Civil) everywhere — sign-up, faculty creation and
+subjects — so one department can't be split into differently spelled groups.
 
 **Admin** — creates faculty accounts; semester report (risk distribution, averages) and department comparison
 
@@ -140,10 +144,10 @@ All `/api` routes except login/sign-up need an `Authorization: Bearer <token>` h
 
 | Access | Endpoints |
 |---|---|
-| Public | `POST /api/login` · `POST /api/register` · `GET /api/admin-exists` · `POST /api/register-admin` (only until an admin exists) |
+| Public | `POST /api/login` · `POST /api/register` · `GET /api/admin-exists` · `GET /api/departments` · `POST /api/register-admin` (only until an admin exists) |
 | Any logged-in account | `POST /api/change-password` |
 | Student (own data) | `GET /api/dashboard/{username}` · `GET /api/insights/{username}` · `GET, POST /api/semesters/{username}` · `POST /api/end-semester/{username}` · `GET, POST /api/subjects/{username}` · `POST /api/calibration/{username}` · `POST /api/focus-activity/{username}` · `POST /api/recovery-activity/{username}` · `POST /api/toggle-focus-activity/{username}?name=` · `POST /api/toggle-recovery-activity/{username}?name=` · `POST /api/wellness/{username}` · `POST /api/assignments/{username}` · `POST /api/submit-task/{username}?id=` · `POST /api/coping-plan/{username}` · `POST /api/end-coping-plan/{username}` · `GET /api/report/{username}` |
-| Faculty, Admin | `GET /api/faculty/heatmap?department=` · `GET /api/faculty/high-risk` |
+| Faculty, Admin | `GET /api/faculty/heatmap?department=` · `GET /api/faculty/high-risk?department=` (faculty always get their own department) |
 | Admin | `POST /api/admin/create-faculty` · `GET /api/admin/report/{semester}` · `GET /api/admin/trends` |
 
 Errors come back as a plain-text message with a 400 (invalid input), 401 (not logged in),

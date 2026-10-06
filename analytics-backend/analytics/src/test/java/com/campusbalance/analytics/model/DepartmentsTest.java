@@ -14,6 +14,13 @@ class DepartmentsTest {
     }
 
     @Test
+    void onlyListedDepartmentsAreKnown() {
+        assertThat(Departments.isKnown("ece")).isTrue();
+        assertThat(Departments.isKnown("Physics")).isFalse();
+        assertThat(Departments.isKnown(null)).isFalse();
+    }
+
+    @Test
     void unknownDepartmentsAreKeptAsTyped() {
         assertThat(Departments.normalize(" Administration ")).isEqualTo("Administration");
         assertThat(Departments.normalize(null)).isNull();

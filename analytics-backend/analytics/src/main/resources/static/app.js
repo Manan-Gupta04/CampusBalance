@@ -129,6 +129,28 @@ function escapeHtml(value) {
     })[c]);
 }
 
+// ---------- Departments ----------
+
+let departmentsRequest = null;
+
+// The fixed department list from the server, fetched once per page
+function getDepartments() {
+    departmentsRequest ||= api('/api/departments', { auth: false }).then(res => res.json());
+    return departmentsRequest;
+}
+
+// Fills a <select> with the departments. `placeholder` becomes an empty first option;
+// `selected` is preselected if it's in the list.
+async function fillDepartmentSelect(select, { placeholder = 'Choose your department…', selected = '' } = {}) {
+    const departments = await getDepartments();
+    select.innerHTML = `<option value="">${escapeHtml(placeholder)}</option>` + departments.map(d =>
+        `<option value="${escapeHtml(d.code)}">${escapeHtml(d.code)} — ${escapeHtml(d.name)}</option>`).join('');
+    if (departments.some(d => d.code === selected)) {
+        select.value = selected;
+        select.selectedOptions[0].defaultSelected = true; // so form.reset() returns to it
+    }
+}
+
 // ---------- Burnout signals ----------
 
 // A chip per burnout class, e.g. "PHY · Physical Exhaustion", with the reason as a tooltip

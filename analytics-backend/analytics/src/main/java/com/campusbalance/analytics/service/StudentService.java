@@ -186,6 +186,10 @@ public class StudentService {
         Student s = requireStudent(username);
         Semester sem = requireActiveSemester(s);
 
+        // A subject's department is optional, but must come from the list when given
+        String department = request.getDepartment() == null || request.getDepartment().isBlank() ? null : request.getDepartment();
+        if (department != null) requireKnownDepartment(department);
+
         String name = request.getSubjectName().trim();
         Subject existing = subjectRepository.findBySubjectNameIgnoreCaseAndUsernameAndSemesterNumber(
                 name, username, sem.getNumber());
@@ -195,7 +199,7 @@ public class StudentService {
         subject.setUsername(username);
         subject.setSemesterNumber(sem.getNumber());
         subject.setSubjectName(name);
-        subject.setDepartment(Departments.normalize(request.getDepartment()));
+        subject.setDepartment(Departments.normalize(department));
         subject.setCredits(request.getCredits());
         subject.setConstant(false);
         subject.setCalibrationComplete(false);
@@ -685,8 +689,19 @@ public class StudentService {
         repository.save(account);
     }
 
+    // Any account (student, faculty or admin) by username — used to look up the logged-in user
+    public Student getAccount(String username) {
+        return requireStudent(username);
+    }
+
+    // Students and faculty must belong to one of the fixed departments
+    private static void requireKnownDepartment(String department) {
+        if (!Departments.isKnown(department)) throw ApiException.badRequest("Pick a department from the list");
+    }
+
     // Public signup — always creates a STUDENT account
     public boolean registerStudent(AccountRequest request) {
+        requireKnownDepartment(request.department());
         return createAccount(request, "STUDENT");
     }
 
@@ -702,6 +717,7 @@ public class StudentService {
 
     // Called from the admin dashboard to provision a faculty account
     public boolean createFaculty(AccountRequest request) {
+        requireKnownDepartment(request.department());
         return createAccount(request, "FACULTY");
     }
 

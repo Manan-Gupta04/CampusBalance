@@ -31,10 +31,7 @@
     <main class="main">
         <div class="page-header">
             <h1>Class Stress Heatmap</h1>
-            <form class="toolbar" id="filterForm">
-                <input type="text" id="deptFilter" placeholder="Department, e.g. CSE" aria-label="Filter by department">
-                <button type="submit" class="btn btn-primary">Filter</button>
-            </form>
+            <span class="badge" id="deptScope" hidden></span>
         </div>
 
         <div class="stats-grid">
@@ -83,14 +80,21 @@
 
         const RISK_COLORS = { HIGH: '#e5266f', MEDIUM: '#e8890c', LOW: '#4cc9f0' };
 
+        // The server limits faculty to their own department, so there's nothing to filter here
         async function loadHeatmap() {
-            const dept = document.getElementById('deptFilter').value.trim();
-            const path = dept ? `/api/faculty/heatmap?department=${encodeURIComponent(dept)}` : '/api/faculty/heatmap';
             try {
-                const res = await api(path);
+                const res = await api('/api/faculty/heatmap');
                 if (!res.ok) return toast(await errorText(res), 'error');
                 const data = await res.json();
                 const students = data.students || [];
+
+                const scope = document.getElementById('deptScope');
+                if (data.department) {
+                    const departments = await getDepartments();
+                    const match = departments.find(d => d.code === data.department);
+                    scope.innerText = match ? `${match.code} · ${match.name}` : data.department;
+                    scope.hidden = false;
+                }
 
                 document.getElementById('totalStudents').innerText = data.totalStudents;
                 document.getElementById('avgBalance').innerText = data.classAverageBalance + '%';
@@ -155,11 +159,6 @@
                     </tr>`).join('');
             } catch (err) { console.error('High-risk load error', err); }
         }
-
-        document.getElementById('filterForm').addEventListener('submit', e => {
-            e.preventDefault();
-            withBusy(e.submitter, loadHeatmap);
-        });
 
         if (requireRole('FACULTY')) {
             document.getElementById('sideName').innerText = Session.user;

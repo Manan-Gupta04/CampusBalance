@@ -183,7 +183,7 @@
                     <label for="subName">Subject name</label>
                     <input type="text" id="subName" placeholder="e.g. Operating Systems" maxlength="60" required>
                     <label for="subDept">Department</label>
-                    <input type="text" id="subDept" placeholder="e.g. CSE" maxlength="40">
+                    <select id="subDept"></select>
                     <label for="subCredits">Credits</label>
                     <input type="number" id="subCredits" value="3" min="1" max="10" required>
                     <div class="form-actions"><button type="submit" class="btn btn-primary">Add Subject</button></div>
@@ -376,8 +376,14 @@
 
         // ---------- Dashboard ----------
 
+        let subjectDepartmentsFilled = false;
+
         function renderDashboard() {
             const active = dash.hasActiveSemester;
+            if (!subjectDepartmentsFilled) {
+                subjectDepartmentsFilled = true;
+                fillDepartmentSelect(document.getElementById('subDept'), { placeholder: 'No department', selected: dash.department });
+            }
             setText('sideName', 'Hello, ' + (dash.name || user));
             const streak = dash.dailyStreak ?? 0;
             setText('streakText', `🔥 ${streak} day${streak === 1 ? '' : 's'}`);
@@ -707,7 +713,7 @@
         }
 
         onSubmit('subjectForm', async form => {
-            const body = { subjectName: val('subName').trim(), department: val('subDept').trim(), credits: parseInt(val('subCredits')) };
+            const body = { subjectName: val('subName').trim(), department: val('subDept'), credits: parseInt(val('subCredits')) };
             const res = await api(`/api/subjects/${me}`, { method: 'POST', body });
             if (!res.ok) return toast(await errorText(res), 'error');
             toast(`Added ${body.subjectName}`, 'success');

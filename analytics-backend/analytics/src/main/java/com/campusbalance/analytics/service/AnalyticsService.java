@@ -216,10 +216,15 @@ public class AnalyticsService {
 
     // ---------- Faculty: class stress heatmap ----------
 
-    public Map<String, Object> getFacultyHeatmap(String department) {
-        List<Student> students = (department == null || department.isBlank())
+    // All students, or only one department's when `department` is given
+    private List<Student> studentsIn(String department) {
+        return department == null || department.isBlank()
                 ? studentRepository.findByRole("STUDENT")
                 : studentRepository.findByRoleAndDepartment("STUDENT", Departments.normalize(department));
+    }
+
+    public Map<String, Object> getFacultyHeatmap(String department) {
+        List<Student> students = studentsIn(department);
         Map<String, List<AnalyticsResult>> recent = recentSnapshotsByUser();
         Map<String, BurnoutClassifier.Assessment> assessments = assessAll(students, recent);
 
@@ -245,6 +250,7 @@ public class AnalyticsService {
                 .average().orElse(0);
 
         Map<String, Object> result = new HashMap<>();
+        result.put("department", department == null || department.isBlank() ? null : Departments.normalize(department));
         result.put("students", rows);
         result.put("classAverageBalance", Math.round(avgBalance * 10.0) / 10.0);
         result.put("totalStudents", rows.size());
@@ -255,8 +261,8 @@ public class AnalyticsService {
 
     // HIGH-risk students with their burnout classes, intervention tier and 14-day Balance Score trend,
     // so an advisor can tell a one-day spike from a weeks-long decline. Most urgent tier first.
-    public List<Map<String, Object>> getHighRiskStudents() {
-        List<Student> students = studentRepository.findByRole("STUDENT");
+    public List<Map<String, Object>> getHighRiskStudents(String department) {
+        List<Student> students = studentsIn(department);
         Map<String, List<AnalyticsResult>> recent = recentSnapshotsByUser();
         List<Student> highRisk = students.stream()
                 .filter(s -> {

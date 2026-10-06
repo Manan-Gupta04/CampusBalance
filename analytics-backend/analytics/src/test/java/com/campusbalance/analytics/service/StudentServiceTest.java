@@ -1,5 +1,6 @@
 package com.campusbalance.analytics.service;
 
+import com.campusbalance.analytics.dto.AccountRequest;
 import com.campusbalance.analytics.model.Activity;
 import com.campusbalance.analytics.model.Semester;
 import com.campusbalance.analytics.model.Student;
@@ -20,6 +21,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -144,6 +146,17 @@ class StudentServiceTest {
 
         assertThatThrownBy(() -> service.createSemester("alice", request))
                 .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
+    }
+
+    @Test
+    void signUpNeedsADepartmentFromTheList() {
+        assertThatThrownBy(() -> service.registerStudent(new AccountRequest("bob", "password1", "Bob", "Physics", null)))
+                .isInstanceOfSatisfying(ApiException.class, e -> assertThat(e.getStatus()).isEqualTo(HttpStatus.BAD_REQUEST));
+        assertThatThrownBy(() -> service.createFaculty(new AccountRequest("fran", "password1", "Fran", null, null)))
+                .isInstanceOf(ApiException.class);
+
+        assertThat(service.registerStudent(new AccountRequest("bob", "password1", "Bob", "cse", null))).isTrue();
+        verify(repository).save(argThat(s -> "CSE".equals(s.getDepartment())));
     }
 
     @Test

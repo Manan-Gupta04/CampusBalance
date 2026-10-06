@@ -8,6 +8,7 @@ import com.campusbalance.analytics.security.SecurityConfig;
 import com.campusbalance.analytics.security.TokenService;
 import com.campusbalance.analytics.service.AnalyticsService;
 import com.campusbalance.analytics.service.StudentService;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -17,6 +18,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -39,11 +41,44 @@ class SecurityRulesTest {
     @MockitoBean
     private AnalyticsService analyticsService;
 
-    private String tokenFor(String username, String role) {
+    private static Student account(String username, String role, String department) {
         Student account = new Student();
         account.setUsername(username);
         account.setRole(role);
-        return "Bearer " + tokenService.issue(account);
+        account.setDepartment(department);
+        return account;
+    }
+
+    private String tokenFor(String username, String role) {
+        return "Bearer " + tokenService.issue(account(username, role, null));
+    }
+
+    @BeforeEach
+    void staffAccounts() {
+        when(studentService.getAccount("fran")).thenReturn(account("fran", "FACULTY", "ECE"));
+        when(studentService.getAccount("ada")).thenReturn(account("ada", "ADMIN", "Administration"));
+    }
+
+    @Test
+    void facultyOnlySeeTheirOwnDepartment() throws Exception {
+        String faculty = tokenFor("fran", "FACULTY");
+        mvc.perform(get("/api/faculty/heatmap").param("department", "CSE").header("Authorization", faculty))
+                .andExpect(status().isOk());
+        verify(analyticsService).getFacultyHeatmap("ECE");
+        mvc.perform(get("/api/faculty/high-risk").header("Authorization", faculty)).andExpect(status().isOk());
+        verify(analyticsService).getHighRiskStudents("ECE");
+
+        // Admins see whichever department they ask for, or all of them
+        String admin = tokenFor("ada", "ADMIN");
+        mvc.perform(get("/api/faculty/heatmap").param("department", "CSE").header("Authorization", admin));
+        verify(analyticsService).getFacultyHeatmap("CSE");
+        mvc.perform(get("/api/faculty/high-risk").header("Authorization", admin));
+        verify(analyticsService).getHighRiskStudents(null);
+    }
+
+    @Test
+    void departmentListIsPublic() throws Exception {
+        mvc.perform(get("/api/departments")).andExpect(status().isOk());
     }
 
     @Test
