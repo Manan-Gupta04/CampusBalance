@@ -247,7 +247,7 @@ public class StudentService {
         subject.setUsername(username);
         subject.setSemesterNumber(sem.getNumber());
         subject.setSubjectName(name);
-        subject.setDepartment(request.getDepartment());
+        subject.setDepartment(Departments.normalize(request.getDepartment()));
         subject.setCredits(request.getCredits());
         subject.setConstant(false);
         subject.setCalibrationComplete(false);
@@ -557,7 +557,7 @@ public class StudentService {
         account.setUsername(request.username());
         account.setPassword(passwordEncoder.encode(request.password()));
         account.setName(request.name());
-        account.setDepartment(request.department());
+        account.setDepartment(Departments.normalize(request.department()));
         account.setBatchYear(request.batchYear());
         account.setRole(role);
         repository.save(account);

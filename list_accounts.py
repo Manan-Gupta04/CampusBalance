@@ -6,7 +6,7 @@ a clean CSV (username, role, name, department) -- much easier to reference
 than scrolling through your terminal history.
 
 All seeded accounts (from seed_data.py) share the password: Campus@123
-Your admin account is separate and keeps its own password.
+Accounts created by hand (and your admin account) keep their own passwords.
 
 SETUP: pip install pymongo   (you already have this from seed_data.py)
 RUN:   python list_accounts.py
@@ -82,4 +82,4 @@ if __name__ == "__main__":
 
     print(f"Found {len(students)} students and {len(faculty)} faculty accounts.")
     print(f"Saved to {OUTPUT_FILE} -- open it in Excel to see the full list.")
-    print("Every account in this list uses the password: Campus@123")
+    print("Seeded accounts use the password Campus@123 (accounts created by hand keep their own).")

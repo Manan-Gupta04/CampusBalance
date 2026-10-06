@@ -1,5 +1,6 @@
 package com.campusbalance.analytics.migration;
 
+import com.campusbalance.analytics.model.Departments;
 import com.campusbalance.analytics.model.Semester;
 import com.campusbalance.analytics.model.Student;
 import com.campusbalance.analytics.model.Subject;
@@ -11,10 +12,15 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * One-time fixes for data written by older versions of the app. Each runs once, then is
@@ -30,19 +36,22 @@ public class StartupMigrations implements ApplicationRunner {
     private final StudentRepository students;
     private final SubjectRepository subjects;
     private final AnalyticsService analyticsService;
+    private final MongoTemplate mongo;
 
     public StartupMigrations(AppliedMigrationRepository applied, StudentRepository students,
-                             SubjectRepository subjects, AnalyticsService analyticsService) {
+                             SubjectRepository subjects, AnalyticsService analyticsService, MongoTemplate mongo) {
         this.applied = applied;
         this.students = students;
         this.subjects = subjects;
         this.analyticsService = analyticsService;
+        this.mongo = mongo;
     }
 
     @Override
     public void run(ApplicationArguments args) {
         runOnce("2026-10-assignment-ids", this::backfillAssignmentIds);
         runOnce("2026-10-recalculate-difficulty-coefficients", this::recalculateDifficultyCoefficients);
+        runOnce("2026-10-normalize-departments", this::normalizeDepartments);
     }
 
     private void runOnce(String name, Runnable migration) {
@@ -80,5 +89,19 @@ public class StartupMigrations implements ApplicationRunner {
             count++;
         }
         log.info("Recalculated D_s for {} calibrated subjects", count);
+    }
+
+    // "cse" and "CSE" used to be stored as typed, which split the department charts in two
+    private void normalizeDepartments() {
+        long updated = 0;
+        for (String collection : new String[] {"students", "subjects", "analytics_results"}) {
+            for (String canonical : Departments.KNOWN) {
+                Query misspelled = new Query(new Criteria().andOperator(
+                        Criteria.where("department").regex("^\\s*" + Pattern.quote(canonical) + "\\s*$", "i"),
+                        Criteria.where("department").ne(canonical)));
+                updated += mongo.updateMulti(misspelled, Update.update("department", canonical), collection).getModifiedCount();
+            }
+        }
+        log.info("Normalized the department name on {} documents", updated);
     }
 }

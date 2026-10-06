@@ -149,7 +149,7 @@ public class AnalyticsService {
     public Map<String, Object> getFacultyHeatmap(String department) {
         List<Student> students = (department == null || department.isBlank())
                 ? studentRepository.findByRole("STUDENT")
-                : studentRepository.findByRoleAndDepartment("STUDENT", department);
+                : studentRepository.findByRoleAndDepartment("STUDENT", Departments.normalize(department));
 
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Student s : students) {
