@@ -327,6 +327,58 @@ th { color: var(--muted); text-transform: uppercase; font-size: 11px; letter-spa
 .rec-POSITIVE { border-left-color: var(--success); background: #ecfff8; }
 .rec-INFO { border-left-color: #999; background: #f5f5f5; }
 
+/* ---------- Burnout signals and interventions ---------- */
+
+.signal {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+    cursor: default;
+}
+.signal.t1 { background: var(--warning-soft); color: var(--warning); }
+.signal.t2 { background: #ffe9dc; color: #c4500a; }
+.signal.t3 { background: var(--danger-soft); color: var(--danger); }
+.signals { display: flex; flex-wrap: wrap; gap: 6px; }
+.signal-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -12px 0 20px; font-size: 13px; }
+.link-btn { border: 0; background: none; padding: 0; color: var(--primary); font: inherit; font-weight: 600; cursor: pointer; }
+
+.flag-list { display: flex; flex-direction: column; gap: 10px; }
+.flag { display: flex; gap: 12px; align-items: flex-start; font-size: 14px; }
+.flag .signal { margin-top: 1px; }
+
+.tier-note { font-size: 14px; font-weight: 600; margin-bottom: 14px; }
+.tier-note.t0 { color: var(--success); }
+.tier-note.t1 { color: var(--warning); }
+.tier-note.t2 { color: #c4500a; }
+.tier-note.t3 { color: var(--danger); }
+
+.intervention { border-radius: 12px; padding: 16px; margin-bottom: 12px; border: 1px solid var(--border); }
+.intervention h3 { font-size: 15px; margin-bottom: 4px; }
+.intervention p { font-size: 14px; margin-bottom: 10px; }
+.intervention.escalation { background: var(--danger-soft); border-color: #ffb3cf; }
+.intervention.escalation h3 { color: var(--danger); }
+.intervention.plan-offer { background: #fff4ec; border-color: #ffd0b0; }
+.intervention.nudge { background: #fafbff; }
+.intervention .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.plan-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.plan-weeks { list-style: none; margin: 0; padding: 0; }
+.plan-weeks li { display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--border); font-size: 14px; }
+.plan-weeks .wk { font-weight: 700; min-width: 58px; }
+.plan-weeks .goal { flex: 1; }
+.plan-weeks .state { white-space: nowrap; font-weight: 600; }
+.plan-weeks li.DONE .state { color: var(--success); }
+.plan-weeks li.MISSED .state { color: var(--danger); }
+.plan-weeks li.IN_PROGRESS { background: var(--primary-soft); border-radius: 8px; padding: 10px; }
+.plan-weeks li.UPCOMING { opacity: 0.55; }
+
+.sparkline { display: block; }
+
 /* ---------- Calendar ---------- */
 
 .cal-header { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; }

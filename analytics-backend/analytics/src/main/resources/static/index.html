@@ -44,6 +44,7 @@
                 <h1 id="welcomeTitle">Loading…</h1>
                 <span id="riskLabel" class="badge" hidden></span>
             </div>
+            <div id="signalRow" class="signal-row" hidden></div>
             <div id="noSemesterBanner" class="banner banner-info" hidden>
                 📚 You don't have an active semester yet. Go to the <strong>Semester</strong> tab to start one — that unlocks
                 subjects, assignments, activities and daily check-ins.
@@ -84,6 +85,17 @@
                         <div id="insightForecastNote" class="forecast-note"></div>
                     </div>
                 </div>
+            </div>
+            <div class="card">
+                <p class="card-label">Burnout signals</p>
+                <div id="burnoutTier" class="tier-note t0">Checking…</div>
+                <div id="burnoutFlags" class="flag-list"></div>
+            </div>
+            <div class="card">
+                <p class="card-label">What to do</p>
+                <div id="interventionsList"></div>
+                <div id="copingPlanView"></div>
+                <a class="btn btn-secondary" href="report.html" target="_blank" rel="noopener">📄 Summary report for a counsellor</a>
             </div>
             <div class="card">
                 <p class="card-label">Balance Score: history &amp; 7-day forecast</p>
@@ -374,6 +386,14 @@
             document.getElementById('noSemesterBanner').hidden = active;
             document.getElementById('overloadBanner').hidden = !(active && dash.sustainedOverload);
 
+            const burnout = active ? dash.burnout : null;
+            const signalRow = document.getElementById('signalRow');
+            signalRow.hidden = !(burnout && burnout.tier > 0);
+            if (!signalRow.hidden) {
+                signalRow.innerHTML = `<span class="muted">Burnout signals:</span> ${signalChips(burnout.flags)}
+                    <button class="link-btn" onclick="showTab('insights')">What to do →</button>`;
+            }
+
             const risk = document.getElementById('riskLabel');
             const balance = document.getElementById('balanceText');
             risk.hidden = !active;
@@ -457,6 +477,7 @@
             setText('insightForecastNote', forecast.daysUntilHighRisk
                 ? `⚠️ At this rate, HIGH burnout risk in about ${forecast.daysUntilHighRisk} day(s).` : '');
             document.getElementById('insightNoSemester').hidden = data.hasActiveSemester;
+            renderBurnout(data.burnout, data.interventions || [], data.copingPlan);
 
             // History line plus a dashed projection that starts from the latest real point
             const labels = trendHistory.map(h => h.date);
@@ -499,6 +520,90 @@
                     <div class="icon">${icons[r.severity] || '💬'}</div>
                     <div>${escapeHtml(r.message)}</div>
                 </div>`).join('');
+        }
+
+        // ---------- Burnout signals & interventions ----------
+
+        function renderBurnout(burnout, interventions, plan) {
+            const tier = burnout ? burnout.tier : 0;
+            const tierEl = document.getElementById('burnoutTier');
+            tierEl.className = `tier-note t${tier}`;
+            tierEl.innerText = (tier === 0 ? '✅ ' : '') + TIER_LABELS[tier];
+            document.getElementById('burnoutFlags').innerHTML = burnout && burnout.flags.length
+                ? burnout.flags.map(f => `
+                    <div class="flag">
+                        ${signalChips([f], { short: true })}
+                        <div><strong>${escapeHtml(f.name)}</strong><br><span class="muted">${escapeHtml(f.reason)}</span></div>
+                    </div>`).join('')
+                : '<p class="muted">Nothing in your recent check-ins or workload matches a burnout pattern. Keep checking in daily so this stays accurate.</p>';
+
+            document.getElementById('interventionsList').innerHTML = interventions.length
+                ? interventions.map(renderIntervention).join('')
+                : (tier === 0 ? '<p class="muted">Nothing to act on right now — keep up your routine.</p>' : '');
+            renderCopingPlan(plan);
+        }
+
+        function renderIntervention(i) {
+            if (i.kind === 'ESCALATION') {
+                return `<div class="intervention escalation">
+                    <h3>🚨 ${escapeHtml(i.title)}</h3><p>${escapeHtml(i.message)}</p>
+                    <div class="actions"><a class="btn btn-danger btn-small" href="report.html" target="_blank" rel="noopener">Open summary report</a></div>
+                </div>`;
+            }
+            if (i.kind === 'PLAN_OFFER') {
+                return `<div class="intervention plan-offer">
+                    <h3>🧭 ${escapeHtml(i.title)} <small>· 4 weeks</small></h3><p>${escapeHtml(i.message)}</p>
+                    <div class="actions"><button class="btn btn-primary btn-small" data-plan="${escapeHtml(i.planType)}" onclick="startPlan(this)">Start this plan</button></div>
+                </div>`;
+            }
+            return `<div class="intervention nudge"><h3>💡 ${escapeHtml(i.title)}</h3><p>${escapeHtml(i.message)}</p></div>`;
+        }
+
+        const WEEK_STATE = { DONE: '✅ Done', MISSED: '✖ Missed', IN_PROGRESS: '⏳ This week', UPCOMING: 'Upcoming' };
+
+        function renderCopingPlan(plan) {
+            const el = document.getElementById('copingPlanView');
+            const running = plan && plan.status === 'ACTIVE';
+            // A finished plan stays visible for two weeks, then makes room again
+            const recentlyFinished = plan && !running && (Date.now() - new Date(plan.endDate)) < 14 * 86400000;
+            if (!running && !recentlyFinished) {
+                el.innerHTML = '';
+                return;
+            }
+            const met = plan.weeks.filter(w => w.status === 'DONE').length;
+            const heading = running ? `Week ${plan.currentWeek} of 4`
+                : `${plan.status === 'COMPLETED' ? 'Finished' : 'Ended early'} — ${met} of 4 weekly goals met`;
+            el.innerHTML = `<div class="intervention">
+                <div class="plan-head">
+                    <div><h3>🧭 ${escapeHtml(plan.title)}</h3><small>${escapeHtml(heading)} · ${escapeHtml(plan.startDate)} → ${escapeHtml(plan.endDate)}</small></div>
+                    ${running ? '<button class="btn btn-secondary btn-small" onclick="endPlan(this)">End plan</button>' : ''}
+                </div>
+                <ol class="plan-weeks">${plan.weeks.map(w => `
+                    <li class="${escapeHtml(w.status)}">
+                        <span class="wk">Week ${Number(w.week)}</span>
+                        <span class="goal">${escapeHtml(w.goal)}<br><small>${escapeHtml(w.tip)}</small></span>
+                        <span class="state">${WEEK_STATE[w.status] || ''}${w.status === 'UPCOMING' ? '' : ` · ${Number(w.achieved)}/${Number(w.target)}`}</span>
+                    </li>`).join('')}
+                </ol>
+            </div>`;
+        }
+
+        async function startPlan(button) {
+            await withBusy(button, async () => {
+                const res = await api(`/api/coping-plan/${me}`, { method: 'POST', body: { type: button.dataset.plan } });
+                if (!res.ok) return toast(await errorText(res), 'error');
+                toast('Plan started — your weekly goals are below', 'success');
+                await loadInsights();
+            });
+        }
+
+        async function endPlan(button) {
+            if (!await confirmDialog('End your coping plan now? Your progress so far is kept.', 'End plan')) return;
+            await withBusy(button, async () => {
+                const res = await api(`/api/end-coping-plan/${me}`, { method: 'POST' });
+                toast(await errorText(res), res.ok ? 'success' : 'error');
+                await loadInsights();
+            });
         }
 
         // ---------- Daily check-in ----------

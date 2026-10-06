@@ -129,6 +129,38 @@ function escapeHtml(value) {
     })[c]);
 }
 
+// ---------- Burnout signals ----------
+
+// A chip per burnout class, e.g. "PHY · Physical Exhaustion", with the reason as a tooltip
+function signalChips(flags, { short = false } = {}) {
+    if (!flags || !flags.length) return '';
+    return `<span class="signals">${flags.map(f => `
+        <span class="signal t${Number(f.tier)}" title="${escapeHtml(f.reason)}">${escapeHtml(f.code)}${short ? '' : ' · ' + escapeHtml(f.name)}</span>`).join('')}</span>`;
+}
+
+const TIER_LABELS = {
+    0: 'No burnout signals right now',
+    1: 'Tier 1 · Self-help nudges',
+    2: 'Tier 2 · Coping plan recommended',
+    3: 'Tier 3 · Please talk to a counsellor'
+};
+
+// Tiny inline line chart of 0-100 scores, with the HIGH-risk line (40) dashed
+function sparkline(values, width = 120, height = 34) {
+    const points = (values || []).map(Number).filter(v => !Number.isNaN(v));
+    if (points.length < 2) return '<span class="muted">–</span>';
+    const x = i => (i / (points.length - 1)) * (width - 4) + 2;
+    const y = v => height - 2 - (Math.max(0, Math.min(100, v)) / 100) * (height - 4);
+    const last = points[points.length - 1];
+    const color = last >= 70 ? '#00a383' : last >= 40 ? '#e8890c' : '#e5266f';
+    return `<svg class="sparkline" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img"
+                 aria-label="Balance Score trend, latest ${Math.round(last)}">
+        <line x1="0" x2="${width}" y1="${y(40)}" y2="${y(40)}" stroke="#e5266f" stroke-dasharray="3 3" stroke-width="1" opacity="0.5"/>
+        <polyline fill="none" stroke="${color}" stroke-width="2" points="${points.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}"/>
+        <circle cx="${x(points.length - 1)}" cy="${y(last)}" r="2.5" fill="${color}"/>
+    </svg>`;
+}
+
 // Width-to-height ratio for line/bar charts: taller on phones so they stay readable
 function chartAspect() {
     return window.innerWidth < 600 ? 1.1 : 2;

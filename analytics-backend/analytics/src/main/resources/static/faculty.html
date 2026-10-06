@@ -50,14 +50,19 @@
 
         <div class="card">
             <p class="card-label">Advisor: High-Risk Watchlist</p>
+            <p class="muted">Most urgent first. The 14-day trend shows whether a HIGH score is a one-day spike or a long decline
+                (dashed line = HIGH-risk threshold). Hover a signal to see why it fired.</p>
             <div class="table-wrap">
                 <table>
                     <thead>
-                        <tr><th>Name</th><th>Username</th><th>Dept</th><th>Balance Score</th><th>Sustained Overload (3+ days)</th></tr>
+                        <tr><th>Student</th><th>Dept</th><th>Balance</th><th>14-day trend</th><th>Burnout signals</th><th>Tier</th></tr>
                     </thead>
                     <tbody id="riskTableBody"></tbody>
                 </table>
             </div>
+            <p class="muted">Signals: PHY Physical Exhaustion · EMO Emotional Exhaustion · COG Cognitive Overload ·
+                ORG Organizational Issues · CTRL Loss of Control (3+ days over 85% workload).
+                Tier 1 = self-help nudges · Tier 2 = coping plan · Tier 3 = counsellor referral.</p>
         </div>
 
         <div class="card">
@@ -65,7 +70,7 @@
             <div class="table-wrap">
                 <table>
                     <thead>
-                        <tr><th>Name</th><th>Username</th><th>Dept</th><th>Sem</th><th>Balance Score</th><th>Risk</th></tr>
+                        <tr><th>Name</th><th>Username</th><th>Dept</th><th>Sem</th><th>Balance Score</th><th>Risk</th><th>Signals</th></tr>
                     </thead>
                     <tbody id="studentTableBody"></tbody>
                 </table>
@@ -116,7 +121,7 @@
         function renderTable(students) {
             const body = document.getElementById('studentTableBody');
             if (!students.length) {
-                body.innerHTML = '<tr><td colspan="6" class="empty">No students found.</td></tr>';
+                body.innerHTML = '<tr><td colspan="7" class="empty">No students found.</td></tr>';
                 return;
             }
             body.innerHTML = students.map(s => `<tr>
@@ -126,6 +131,7 @@
                     <td>${escapeHtml(s.semester || '-')}</td>
                     <td>${escapeHtml(s.balanceScore ?? '-')}</td>
                     <td><span class="badge ${escapeHtml(s.burnoutRisk)}">${escapeHtml(s.burnoutRisk)}</span></td>
+                    <td>${signalChips(s.signals, { short: true }) || '<span class="muted">–</span>'}</td>
                 </tr>`).join('');
         }
 
@@ -136,15 +142,16 @@
                 const rows = await res.json();
                 const body = document.getElementById('riskTableBody');
                 if (!rows.length) {
-                    body.innerHTML = '<tr><td colspan="5" class="empty">No high-risk students right now.</td></tr>';
+                    body.innerHTML = '<tr><td colspan="6" class="empty">No high-risk students right now.</td></tr>';
                     return;
                 }
                 body.innerHTML = rows.map(r => `<tr>
-                        <td>${escapeHtml(r.name || '-')}</td>
-                        <td>${escapeHtml(r.username)}</td>
+                        <td><strong>${escapeHtml(r.name || '-')}</strong><br><small>${escapeHtml(r.username)}</small></td>
                         <td>${escapeHtml(r.department || '-')}</td>
-                        <td>${escapeHtml(r.balanceScore)}</td>
-                        <td>${r.sustainedOverload ? '⚠️ Yes' : 'No'}</td>
+                        <td>${escapeHtml(Math.round(r.balanceScore))}%</td>
+                        <td>${sparkline(r.trend)}</td>
+                        <td>${signalChips(r.signals, { short: true }) || '<span class="muted">–</span>'}</td>
+                        <td>${r.tier ? `<span class="signal t${Number(r.tier)}">Tier ${Number(r.tier)}</span>` : '<span class="muted">–</span>'}</td>
                     </tr>`).join('');
             } catch (err) { console.error('High-risk load error', err); }
         }

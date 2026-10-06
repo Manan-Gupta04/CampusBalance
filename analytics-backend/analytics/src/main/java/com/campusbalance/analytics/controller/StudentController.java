@@ -6,6 +6,7 @@ import com.campusbalance.analytics.dto.LoginRequest;
 import com.campusbalance.analytics.dto.LoginResponse;
 import com.campusbalance.analytics.model.*;
 import com.campusbalance.analytics.security.TokenService;
+import com.campusbalance.analytics.service.CopingPlans;
 import com.campusbalance.analytics.service.StudentService;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -183,5 +184,28 @@ public class StudentController {
     public String submitTask(@PathVariable String username, @RequestParam String id) {
         service.submitAssignment(username, id);
         return "Assignment submitted";
+    }
+
+    // ---------- Interventions ----------
+
+    // Body: { type: "SLEEP" | "STRESS" } — starts a 4-week Tier 2 coping plan
+    @PreAuthorize(SELF_ONLY)
+    @PostMapping("/coping-plan/{username}")
+    public CopingPlans.PlanProgress startCopingPlan(@PathVariable String username, @RequestBody Map<String, String> body) {
+        return service.startCopingPlan(username, body.get("type"));
+    }
+
+    @PreAuthorize(SELF_ONLY)
+    @PostMapping("/end-coping-plan/{username}")
+    public String endCopingPlan(@PathVariable String username) {
+        service.endCopingPlan(username);
+        return "Coping plan ended";
+    }
+
+    // Printable summary of recent data that the student can share with a counsellor
+    @PreAuthorize(SELF_ONLY)
+    @GetMapping("/report/{username}")
+    public Map<String, Object> getSummaryReport(@PathVariable String username) {
+        return service.getSummaryReport(username);
     }
 }

@@ -65,6 +65,9 @@ class SecurityRulesTest {
         mvc.perform(get("/api/dashboard/alice").header("Authorization", alice)).andExpect(status().isOk());
         mvc.perform(get("/api/dashboard/bob").header("Authorization", alice)).andExpect(status().isForbidden());
         mvc.perform(post("/api/submit-task/bob").param("id", "x").header("Authorization", alice)).andExpect(status().isForbidden());
+        mvc.perform(get("/api/report/alice").header("Authorization", alice)).andExpect(status().isOk());
+        mvc.perform(get("/api/report/bob").header("Authorization", alice)).andExpect(status().isForbidden());
+        mvc.perform(post("/api/end-coping-plan/bob").header("Authorization", alice)).andExpect(status().isForbidden());
     }
 
     @Test

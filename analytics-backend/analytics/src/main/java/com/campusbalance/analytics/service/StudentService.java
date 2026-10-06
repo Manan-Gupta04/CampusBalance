@@ -12,13 +12,10 @@ import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.*;
 import java.util.function.Function;
-import java.util.stream.Collectors;
 
 @Service
 public class StudentService {
 
-    // "Max Capacity" baseline from the CampusBalance Score formula: 60 hrs of productive work/week
-    private static final double MAX_CAPACITY_HOURS = 60.0;
     private static final int WELLNESS_LOG_XP = 20;
     private static final int ASSIGNMENT_XP = 50;
     static final String NO_ACTIVE_SEMESTER = "No active semester. Start one from the Semester tab first.";
@@ -142,51 +139,21 @@ public class StudentService {
         stats.put("semesterStart", sem.getStartDate());
         stats.put("semesterEnd", sem.getEndDate());
 
-        // 1. Coursework load — uses each subject's calibrated Difficulty Coefficient (D_s)
-        //    once its 2-week calibration phase is complete; falls back to the difficulty-string
-        //    heuristic for subjects that haven't been calibrated yet.
-        double courseworkLoad = computeCourseworkLoad(student, sem);
-
-        // 2. Focus Activities — each active one adds stress
-        double focusLoad = activeWeight(sem.getFocusActivities());
-
-        // 3. Recovery Activities — each active one relieves stress, subtracted straight out of the load
-        double recoveryLoad = activeWeight(sem.getRecoveryActivities());
-
-        // 4. Mood coefficient (Mc) from the latest wellness log this semester
-        double moodCoef = 1.0;
-        WellnessLog latestLog = null;
-        if (!sem.getWellnessLogs().isEmpty()) {
-            latestLog = sem.getWellnessLogs().get(sem.getWellnessLogs().size() - 1);
-            String mood = latestLog.getMood() == null ? "" : latestLog.getMood();
-            if (mood.contains("Stressed") || mood.contains("😫")) moodCoef = 1.5;
-            else if (mood.contains("Neutral") || mood.contains("😐")) moodCoef = 1.2;
-            else if (mood.contains("Good") || mood.contains("😄")) moodCoef = 0.8;
-        }
-
-        // 5. Total Workload Index (Wi) = (Coursework + Focus Activities - Recovery Activities) x Mood Coefficient
-        double rawLoad = Math.max(0, courseworkLoad + focusLoad - recoveryLoad);
-        double finalWorkloadIndex = rawLoad * moodCoef;
-        double workloadPercent = (finalWorkloadIndex / MAX_CAPACITY_HOURS) * 100.0;
-
-        // 6. CampusBalance Score (B) = (1 - Wi/MaxCapacity) x 100% + Recovery Bonus (sleep/energy)
-        double recoveryBonus = 0;
-        if (latestLog != null) {
-            if (latestLog.getSleepHours() >= 7) recoveryBonus += 10;
-            if (latestLog.getSleepHours() < 5) recoveryBonus -= 15;
-            if (latestLog.getEnergyLevel() >= 4) recoveryBonus += 5;
-        }
-        double balanceScore = Math.min(100, Math.max(0, 100 - workloadPercent + recoveryBonus));
-        String risk = (balanceScore < 40) ? "HIGH" : (balanceScore < 70 ? "MEDIUM" : "LOW");
+        double courseworkLoad = courseworkLoad(student, sem);
+        double focusLoad = WorkloadCalculator.activeWeight(sem.getFocusActivities());
+        double recoveryLoad = WorkloadCalculator.activeWeight(sem.getRecoveryActivities());
+        WorkloadCalculator.Score score = WorkloadCalculator.score(courseworkLoad, focusLoad, recoveryLoad, latestLog(sem));
 
         // Daily history point for the trend charts (stored separately, one per student per day)
-        analyticsService.recordSnapshot(student, sem.getNumber(), finalWorkloadIndex, workloadPercent, balanceScore, risk);
+        analyticsService.recordSnapshot(student, sem.getNumber(), score.workloadIndex(), score.workloadPercent(),
+                score.balanceScore(), score.risk());
 
-        stats.put("balanceScore", Math.round(balanceScore));
-        stats.put("workloadIndex", Math.round(finalWorkloadIndex * 10.0) / 10.0);
-        stats.put("workloadPercent", Math.round(workloadPercent * 10.0) / 10.0);
-        stats.put("burnoutRisk", risk);
+        stats.put("balanceScore", Math.round(score.balanceScore()));
+        stats.put("workloadIndex", Math.round(score.workloadIndex() * 10.0) / 10.0);
+        stats.put("workloadPercent", Math.round(score.workloadPercent() * 10.0) / 10.0);
+        stats.put("burnoutRisk", score.risk());
         stats.put("sustainedOverload", analyticsService.hasSustainedOverload(username));
+        stats.put("burnout", assess(student, courseworkLoad, recoveryLoad));
         stats.put("assignments", sem.getAssignments());
         stats.put("wellnessLogs", sem.getWellnessLogs());
         stats.put("focusActivities", sem.getFocusActivities());
@@ -196,40 +163,21 @@ public class StudentService {
         return stats;
     }
 
-    private static double activeWeight(List<Activity> activities) {
-        return activities.stream().filter(Activity::isActive).mapToDouble(Activity::getWeight).sum();
+    // The most recent check-in this semester, or null
+    private static WellnessLog latestLog(Semester sem) {
+        List<WellnessLog> logs = sem.getWellnessLogs();
+        return logs.isEmpty() ? null : logs.get(logs.size() - 1);
     }
 
-    private double computeCourseworkLoad(Student student, Semester sem) {
-        double total = 0;
-        Map<String, List<Student.Assignment>> bySubject = sem.getAssignments().stream()
-                .filter(a -> "Pending".equalsIgnoreCase(a.getStatus()))
-                .collect(Collectors.groupingBy(a -> a.getSubject() == null || a.getSubject().isBlank() ? "General" : a.getSubject()));
-
-        for (Map.Entry<String, List<Student.Assignment>> entry : bySubject.entrySet()) {
-            Subject subject = subjectRepository.findBySubjectNameIgnoreCaseAndUsernameAndSemesterNumber(
-                    entry.getKey(), student.getUsername(), sem.getNumber());
-            List<Student.Assignment> tasks = entry.getValue();
-
-            if (subject != null && subject.isCalibrationComplete() && subject.getDifficultyCoefficient() != null) {
-                // Wi contribution = D_s x H_i (approx. 3 hrs of combined assignment + lecture load per pending item)
-                double hoursForSubject = tasks.size() * 3.0;
-                total += subject.getDifficultyCoefficient() * hoursForSubject;
-            } else {
-                for (Student.Assignment a : tasks) {
-                    int weight = a.getDifficultyWeight() > 0 ? a.getDifficultyWeight() : difficultyToWeight(a.getDifficulty());
-                    total += weight * 3.0;
-                }
-            }
-        }
-        return total;
+    private double courseworkLoad(Student student, Semester sem) {
+        return WorkloadCalculator.courseworkLoad(sem, name -> subjectRepository
+                .findBySubjectNameIgnoreCaseAndUsernameAndSemesterNumber(name, student.getUsername(), sem.getNumber()));
     }
 
-    private int difficultyToWeight(String difficulty) {
-        if (difficulty == null) return 1;
-        if (difficulty.equalsIgnoreCase("Hard")) return 5;
-        if (difficulty.equalsIgnoreCase("Medium")) return 3;
-        return 1;
+    // Burnout classes and intervention tier from the student's check-ins and latest snapshots
+    private BurnoutClassifier.Assessment assess(Student student, double courseworkLoad, double recoveryLoad) {
+        return BurnoutClassifier.assess(student.allWellnessLogs(), analyticsService.getRecentSnapshots(student.getUsername()),
+                courseworkLoad, recoveryLoad, LocalDate.now());
     }
 
     // ================= Subjects (scoped to the active semester) =================
@@ -357,7 +305,7 @@ public class StudentService {
 
         a.setId(UUID.randomUUID().toString());
         a.setTitle(a.getTitle().trim());
-        a.setDifficultyWeight(difficultyToWeight(a.getDifficulty()));
+        a.setDifficultyWeight(WorkloadCalculator.difficultyToWeight(a.getDifficulty()));
         a.setStatus("Pending");
         a.setCompletedAt(null);
         sem.getAssignments().add(a);
@@ -443,6 +391,16 @@ public class StudentService {
         }
         result.put("forecast", forecast);
 
+        // ---- Burnout classes and the tiered interventions they call for ----
+        double courseworkLoad = sem == null ? 0 : courseworkLoad(student, sem);
+        double focusLoad = sem == null ? 0 : WorkloadCalculator.activeWeight(sem.getFocusActivities());
+        double recoveryLoad = sem == null ? 0 : WorkloadCalculator.activeWeight(sem.getRecoveryActivities());
+        BurnoutClassifier.Assessment burnout = assess(student, courseworkLoad, recoveryLoad);
+        result.put("burnout", burnout);
+        result.put("interventions", interventions(student, sem, burnout));
+        result.put("copingPlan", student.getCopingPlan() == null ? null
+                : CopingPlans.progress(student.getCopingPlan(), student.allWellnessLogs(), LocalDate.now()));
+
         List<Map<String, Object>> recommendations = new ArrayList<>();
         if (sem == null) {
             recommendations.add(insightRec("INFO", "Start a semester from the Semester tab to unlock insights tailored to your current workload."));
@@ -451,10 +409,6 @@ public class StudentService {
             return result;
         }
         result.put("hasActiveSemester", true);
-
-        double courseworkLoad = computeCourseworkLoad(student, sem);
-        double focusLoad = activeWeight(sem.getFocusActivities());
-        double recoveryLoad = activeWeight(sem.getRecoveryActivities());
 
         Map<String, Object> breakdown = new HashMap<>();
         breakdown.put("courseworkLoad", Math.round(courseworkLoad * 10.0) / 10.0);
@@ -502,6 +456,11 @@ public class StudentService {
             recommendations.add(insightRec("POSITIVE", "Your Balance Score is trending up — whatever you're doing is working. Keep it going."));
         }
 
+        // At Tier 3 the routine tips stop, so only the serious warnings stay next to the escalation
+        if (burnout.tier() == 3) {
+            recommendations.removeIf(r -> !"HIGH".equals(r.get("severity")));
+        }
+
         if (recommendations.isEmpty()) {
             recommendations.add(insightRec("POSITIVE", "Everything looks balanced right now. No red flags in your current workload or recovery mix."));
         }
@@ -515,6 +474,190 @@ public class StudentService {
         m.put("severity", severity);
         m.put("message", message);
         return m;
+    }
+
+    private static Map<String, Object> intervention(int tier, String kind, String title, String message) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("tier", tier);
+        m.put("kind", kind);
+        m.put("title", title);
+        m.put("message", message);
+        return m;
+    }
+
+    // What to do about each burnout class that fired:
+    //   Tier 3 (CTRL)     — escalate to a counsellor, with the summary report to share
+    //   Tier 2 (PHY, EMO) — offer a 4-week coping plan (unless one is already running)
+    //   Tier 1 (COG, ORG) — lightweight nudges; left out at Tier 3 so they don't bury the escalation
+    private List<Map<String, Object>> interventions(Student student, Semester sem, BurnoutClassifier.Assessment burnout) {
+        Set<String> codes = new HashSet<>(burnout.codes());
+        List<Map<String, Object>> list = new ArrayList<>();
+
+        if (codes.contains("CTRL")) {
+            list.add(intervention(3, "ESCALATION", "Please talk to a counsellor",
+                    "Your workload has stayed above 85% of capacity for three days in a row. That's more than a busy week — "
+                            + "please book a session with your campus counsellor or a mental health professional, and share your "
+                            + "summary report so they can see your recent data."));
+        }
+
+        boolean planRunning = CopingPlans.isRunning(student.getCopingPlan(), LocalDate.now());
+        if (!planRunning && codes.contains("PHY")) {
+            Map<String, Object> offer = intervention(2, "PLAN_OFFER", CopingPlans.PlanType.SLEEP.title,
+                    "Short nights or very low energy keep showing up in your check-ins. This 4-week plan rebuilds your sleep "
+                            + "a step at a time, tracked from your daily check-ins.");
+            offer.put("planType", CopingPlans.PlanType.SLEEP.name());
+            list.add(offer);
+        }
+        if (!planRunning && codes.contains("EMO")) {
+            Map<String, Object> offer = intervention(2, "PLAN_OFFER", CopingPlans.PlanType.STRESS.title,
+                    "Stress has been your main mood this week. This 4-week plan builds recovery time back into your routine "
+                            + "and tracks how you feel through your check-ins.");
+            offer.put("planType", CopingPlans.PlanType.STRESS.name());
+            list.add(offer);
+        }
+
+        if (burnout.tier() < 3) {
+            if (codes.contains("COG")) {
+                list.add(intervention(1, "NUDGE", "Split big tasks into focus blocks", focusBlockHint(sem)));
+                list.add(intervention(1, "NUDGE", "Take a real break today",
+                        "Spend 20 minutes away from screens — a short walk counts. It does more for your load than another hour of study."));
+            }
+            if (codes.contains("ORG")) {
+                list.add(intervention(1, "NUDGE", "Plan a fixed daily study slot",
+                        "Your workload swings sharply from day to day. A fixed daily slot works better than cramming right before deadlines."));
+                list.add(intervention(1, "NUDGE", "Put every deadline in the calendar",
+                        "Add your upcoming assignments now so nothing piles up unnoticed."));
+            }
+        }
+        return list;
+    }
+
+    // Points the student at their most urgent pending assignment, if there is one
+    private static String focusBlockHint(Semester sem) {
+        String generic = "Work in 45-minute blocks with a 5-minute break between them, starting with whatever is due soonest.";
+        if (sem == null) return generic;
+        return sem.getAssignments().stream()
+                .filter(a -> "Pending".equalsIgnoreCase(a.getStatus()) && a.getDeadline() != null && !a.getDeadline().isBlank())
+                .min(Comparator.comparing(Student.Assignment::getDeadline))
+                .map(a -> {
+                    String deadline = a.getDeadline().replace('T', ' ');
+                    boolean overdue = deadline.substring(0, Math.min(10, deadline.length())).compareTo(LocalDate.now().toString()) < 0;
+                    return "Work in 45-minute blocks with a 5-minute break between them. Start with \"" + a.getTitle()
+                            + "\" (" + a.getSubject() + "), " + (overdue ? "overdue since " : "due ") + deadline + ".";
+                })
+                .orElse(generic);
+    }
+
+    // ================= Coping plans (Tier 2) =================
+
+    public CopingPlans.PlanProgress startCopingPlan(String username, String type) {
+        Student s = requireStudent(username);
+        CopingPlans.PlanType planType;
+        try {
+            planType = CopingPlans.PlanType.valueOf(String.valueOf(type));
+        } catch (IllegalArgumentException e) {
+            throw ApiException.badRequest("Unknown coping plan");
+        }
+        LocalDate today = LocalDate.now();
+        if (CopingPlans.isRunning(s.getCopingPlan(), today)) {
+            throw ApiException.conflict("You already have a coping plan running. End it before starting a new one.");
+        }
+        s.setCopingPlan(new CopingPlan(planType.name(), today.toString(), null));
+        repository.save(s);
+        return CopingPlans.progress(s.getCopingPlan(), s.allWellnessLogs(), today);
+    }
+
+    public void endCopingPlan(String username) {
+        Student s = requireStudent(username);
+        LocalDate today = LocalDate.now();
+        if (!CopingPlans.isRunning(s.getCopingPlan(), today)) {
+            throw ApiException.conflict("You don't have a coping plan running.");
+        }
+        s.getCopingPlan().setEndedDate(today.toString());
+        repository.save(s);
+    }
+
+    // ================= Summary report (Tier 3: something to share with a counsellor) =================
+
+    public Map<String, Object> getSummaryReport(String username) {
+        Student student = requireStudent(username);
+        Semester sem = activeSemester(student);
+        LocalDate today = LocalDate.now();
+        List<AnalyticsResult> recentNewestFirst = analyticsService.getRecentSnapshots(username);
+
+        Map<String, Object> report = new LinkedHashMap<>();
+        report.put("generatedOn", today.toString());
+
+        Map<String, Object> who = new LinkedHashMap<>();
+        who.put("name", student.getName());
+        who.put("username", student.getUsername());
+        who.put("department", student.getDepartment());
+        report.put("student", who);
+
+        if (sem != null) {
+            Map<String, Object> semInfo = new LinkedHashMap<>();
+            semInfo.put("number", sem.getNumber());
+            semInfo.put("startDate", sem.getStartDate());
+            semInfo.put("endDate", sem.getEndDate());
+            report.put("semester", semInfo);
+        }
+
+        if (!recentNewestFirst.isEmpty()) {
+            AnalyticsResult latest = recentNewestFirst.get(0);
+            Map<String, Object> current = new LinkedHashMap<>();
+            current.put("date", latest.getDate());
+            current.put("balanceScore", Math.round(latest.getBalanceScore()));
+            current.put("burnoutRisk", latest.getBurnoutRisk());
+            current.put("workloadIndex", Math.round(latest.getWorkloadIndex() * 10.0) / 10.0);
+            current.put("workloadPercent", Math.round(latest.getWorkloadPercent() * 10.0) / 10.0);
+            current.put("sustainedOverload", AnalyticsService.isSustainedOverload(recentNewestFirst));
+            report.put("current", current);
+        }
+
+        double coursework = sem == null ? 0 : courseworkLoad(student, sem);
+        double recovery = sem == null ? 0 : WorkloadCalculator.activeWeight(sem.getRecoveryActivities());
+        report.put("burnout", BurnoutClassifier.assess(student.allWellnessLogs(), recentNewestFirst, coursework, recovery, today));
+
+        List<Map<String, Object>> history = new ArrayList<>();
+        for (int i = recentNewestFirst.size() - 1; i >= 0; i--) {
+            AnalyticsResult r = recentNewestFirst.get(i);
+            Map<String, Object> point = new LinkedHashMap<>();
+            point.put("date", r.getDate());
+            point.put("balanceScore", Math.round(r.getBalanceScore()));
+            point.put("workloadPercent", Math.round(r.getWorkloadPercent()));
+            point.put("burnoutRisk", r.getBurnoutRisk());
+            history.add(point);
+        }
+        report.put("balanceHistory", history);
+
+        List<WellnessLog> checkIns = student.allWellnessLogs().stream()
+                .filter(l -> l.getDate() != null)
+                .sorted(Comparator.comparing(WellnessLog::getDate).reversed())
+                .limit(14)
+                .toList();
+        report.put("checkIns", checkIns);
+        if (!checkIns.isEmpty()) {
+            Map<String, Object> averages = new LinkedHashMap<>();
+            averages.put("sleepHours", Math.round(checkIns.stream().mapToDouble(WellnessLog::getSleepHours).average().orElse(0) * 10.0) / 10.0);
+            averages.put("studyHours", Math.round(checkIns.stream().mapToDouble(WellnessLog::getStudyHours).average().orElse(0) * 10.0) / 10.0);
+            averages.put("stressedDays", checkIns.stream().filter(WorkloadCalculator::isStressed).count());
+            report.put("averages", averages);
+        }
+
+        if (sem != null) {
+            report.put("focusActivities", sem.getFocusActivities().stream().filter(Activity::isActive).toList());
+            report.put("recoveryActivities", sem.getRecoveryActivities().stream().filter(Activity::isActive).toList());
+            List<Student.Assignment> pending = sem.getAssignments().stream()
+                    .filter(a -> "Pending".equalsIgnoreCase(a.getStatus()))
+                    .sorted(Comparator.comparing(a -> String.valueOf(a.getDeadline())))
+                    .toList();
+            report.put("pendingAssignments", pending);
+        }
+
+        if (student.getCopingPlan() != null) {
+            report.put("copingPlan", CopingPlans.progress(student.getCopingPlan(), student.allWellnessLogs(), today));
+        }
+        return report;
     }
 
     // ================= Auth / Registration =================

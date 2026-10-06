@@ -133,6 +133,11 @@ public class AnalyticsService {
         return analyticsResultRepository.findByUsernameOrderByDateAsc(username);
     }
 
+    // The student's last 14 snapshots, newest first
+    public List<AnalyticsResult> getRecentSnapshots(String username) {
+        return analyticsResultRepository.findTop14ByUsernameOrderByDateDesc(username);
+    }
+
     /** One user's most recent snapshots, newest first, as returned by the aggregation below. */
     @Data
     public static class RecentSnapshots {
@@ -141,13 +146,13 @@ public class AnalyticsService {
         private List<AnalyticsResult> snapshots;
     }
 
-    // Every user's 3 most recent snapshots (newest first) in a single query, instead of one query
+    // Every user's 14 most recent snapshots (newest first) in a single query, instead of one query
     // per student — the faculty and admin views list the whole campus at once.
     private Map<String, List<AnalyticsResult>> recentSnapshotsByUser() {
         Aggregation aggregation = Aggregation.newAggregation(
                 Aggregation.sort(Sort.by(Sort.Order.asc("username"), Sort.Order.desc("date"))),
                 Aggregation.group("username").push(Aggregation.ROOT).as("snapshots"),
-                Aggregation.project().and("snapshots").slice(3).as("snapshots"));
+                Aggregation.project().and("snapshots").slice(14).as("snapshots"));
         Map<String, List<AnalyticsResult>> byUser = new HashMap<>();
         mongoTemplate.aggregate(aggregation, AnalyticsResult.class, RecentSnapshots.class)
                 .forEach(r -> byUser.put(r.getUsername(), r.getSnapshots()));
@@ -176,6 +181,39 @@ public class AnalyticsService {
         return true;
     }
 
+    // ---------- Burnout classes for many students at once ----------
+
+    private static String subjectKey(String username, int semesterNumber, String subjectName) {
+        return username + "|" + semesterNumber + "|" + (subjectName == null ? "" : subjectName.toLowerCase());
+    }
+
+    // Classifies every given student with one extra query (all their subjects) — the rules themselves
+    // run in memory on the student documents and the snapshots already loaded.
+    private Map<String, BurnoutClassifier.Assessment> assessAll(List<Student> students,
+                                                                 Map<String, List<AnalyticsResult>> recent) {
+        Map<String, Subject> subjects = new HashMap<>();
+        subjectRepository.findByUsernameIn(students.stream().map(Student::getUsername).toList())
+                .forEach(sub -> subjects.put(subjectKey(sub.getUsername(), sub.getSemesterNumber(), sub.getSubjectName()), sub));
+
+        LocalDate today = LocalDate.now();
+        Map<String, BurnoutClassifier.Assessment> result = new HashMap<>();
+        for (Student s : students) {
+            Semester sem = s.getSemesters().stream()
+                    .filter(Semester::isActive)
+                    .filter(x -> !x.hasEndedBy(today))
+                    .findFirst().orElse(null);
+            double coursework = 0, recovery = 0;
+            if (sem != null) {
+                coursework = WorkloadCalculator.courseworkLoad(sem,
+                        name -> subjects.get(subjectKey(s.getUsername(), sem.getNumber(), name)));
+                recovery = WorkloadCalculator.activeWeight(sem.getRecoveryActivities());
+            }
+            result.put(s.getUsername(), BurnoutClassifier.assess(
+                    s.allWellnessLogs(), recent.get(s.getUsername()), coursework, recovery, today));
+        }
+        return result;
+    }
+
     // ---------- Faculty: class stress heatmap ----------
 
     public Map<String, Object> getFacultyHeatmap(String department) {
@@ -183,10 +221,12 @@ public class AnalyticsService {
                 ? studentRepository.findByRole("STUDENT")
                 : studentRepository.findByRoleAndDepartment("STUDENT", Departments.normalize(department));
         Map<String, List<AnalyticsResult>> recent = recentSnapshotsByUser();
+        Map<String, BurnoutClassifier.Assessment> assessments = assessAll(students, recent);
 
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Student s : students) {
             AnalyticsResult latest = newest(recent.get(s.getUsername()));
+            BurnoutClassifier.Assessment assessment = assessments.get(s.getUsername());
             Map<String, Object> row = new HashMap<>();
             row.put("name", s.getName());
             row.put("username", s.getUsername());
@@ -194,6 +234,8 @@ public class AnalyticsService {
             row.put("semester", s.getActiveSemesterNumber());
             row.put("balanceScore", latest != null ? latest.getBalanceScore() : null);
             row.put("burnoutRisk", latest != null ? latest.getBurnoutRisk() : "NO DATA");
+            row.put("signals", assessment.flags());
+            row.put("tier", assessment.tier());
             rows.add(row);
         }
 
@@ -211,25 +253,39 @@ public class AnalyticsService {
 
     // ---------- Advisor: high-risk student list ----------
 
+    // HIGH-risk students with their burnout classes, intervention tier and 14-day Balance Score trend,
+    // so an advisor can tell a one-day spike from a weeks-long decline. Most urgent tier first.
     public List<Map<String, Object>> getHighRiskStudents() {
         List<Student> students = studentRepository.findByRole("STUDENT");
         Map<String, List<AnalyticsResult>> recent = recentSnapshotsByUser();
-        List<Map<String, Object>> result = new ArrayList<>();
+        List<Student> highRisk = students.stream()
+                .filter(s -> {
+                    AnalyticsResult latest = newest(recent.get(s.getUsername()));
+                    return latest != null && "HIGH".equals(latest.getBurnoutRisk());
+                })
+                .toList();
+        Map<String, BurnoutClassifier.Assessment> assessments = assessAll(highRisk, recent);
 
-        for (Student s : students) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Student s : highRisk) {
             List<AnalyticsResult> snapshots = recent.get(s.getUsername());
-            AnalyticsResult latest = newest(snapshots);
-            if (latest != null && "HIGH".equals(latest.getBurnoutRisk())) {
-                Map<String, Object> row = new HashMap<>();
-                row.put("name", s.getName());
-                row.put("username", s.getUsername());
-                row.put("department", s.getDepartment());
-                row.put("balanceScore", latest.getBalanceScore());
-                row.put("sustainedOverload", isSustainedOverload(snapshots));
-                result.add(row);
-            }
+            BurnoutClassifier.Assessment assessment = assessments.get(s.getUsername());
+            List<AnalyticsResult> oldestFirst = new ArrayList<>(snapshots);
+            Collections.reverse(oldestFirst);
+
+            Map<String, Object> row = new HashMap<>();
+            row.put("name", s.getName());
+            row.put("username", s.getUsername());
+            row.put("department", s.getDepartment());
+            row.put("balanceScore", newest(snapshots).getBalanceScore());
+            row.put("sustainedOverload", isSustainedOverload(snapshots));
+            row.put("signals", assessment.flags());
+            row.put("tier", assessment.tier());
+            row.put("trend", oldestFirst.stream().map(AnalyticsResult::getBalanceScore).toList());
+            result.add(row);
         }
-        result.sort(Comparator.comparingDouble(r -> (double) r.get("balanceScore")));
+        result.sort(Comparator.comparingInt((Map<String, Object> r) -> -(int) r.get("tier"))
+                .thenComparingDouble(r -> (double) r.get("balanceScore")));
         return result;
     }
 

@@ -11,5 +11,6 @@ public interface AnalyticsResultRepository extends MongoRepository<AnalyticsResu
     List<AnalyticsResult> findByUsernameOrderByDateAsc(String username);
     Optional<AnalyticsResult> findFirstByUsernameAndDate(String username, String date);
     List<AnalyticsResult> findTop3ByUsernameOrderByDateDesc(String username);
+    List<AnalyticsResult> findTop14ByUsernameOrderByDateDesc(String username);
     List<AnalyticsResult> findByCurrentSemester(int currentSemester);
 }

@@ -25,8 +25,22 @@ The demo database holds **synthetic** data (150 generated students) — see [Dem
 - Focus activities (add stress) and Recovery activities (relieve it), each pausable
 - Daily wellness check-in (sleep, study, mood, energy); +20 XP and a daily streak
 - Insights: 14-day Balance Score trend, 7-day forecast, workload breakdown and recommendations
+- **Burnout signals** — five rule-based classes, each with the reason it fired, mapped to an intervention tier:
 
-**Faculty** — class stress heatmap (filterable by department) and a high-risk watchlist
+  | Class | Fires when | Tier |
+  |---|---|---|
+  | PHY Physical Exhaustion | 3 of the last 5 check-ins (last 10 days) had under 5 h sleep or energy ≤ 2 | 2 |
+  | EMO Emotional Exhaustion | more than half of the last 7 days' check-ins (min. 3) were "Stressed" | 2 |
+  | COG Cognitive Overload | coursework load ≥ 30 (half of capacity) and ≥ 3× recovery relief | 1 |
+  | ORG Organizational Issues | Workload % jumped 50+ points between neighbouring days (last 14 days) | 1 |
+  | CTRL Loss of Control | Sustained Overload: Workload % > 85 on 3 consecutive days | 3 |
+
+- **Tiered interventions** — Tier 1: targeted nudges · Tier 2: an opt-in 4-week coping plan (sleep or stress) with weekly
+  goals tracked from check-ins · Tier 3: a counsellor referral (routine tips are suppressed) plus a printable
+  **summary report** the student can share
+
+**Faculty** — class stress heatmap (filterable by department) and a high-risk watchlist sorted by intervention tier,
+with each student's burnout signals and 14-day Balance Score trend
 
 **Admin** — creates faculty accounts; semester report (risk distribution, averages) and department comparison
 
@@ -128,7 +142,7 @@ All `/api` routes except login/sign-up need an `Authorization: Bearer <token>` h
 |---|---|
 | Public | `POST /api/login` · `POST /api/register` · `GET /api/admin-exists` · `POST /api/register-admin` (only until an admin exists) |
 | Any logged-in account | `POST /api/change-password` |
-| Student (own data) | `GET /api/dashboard/{username}` · `GET /api/insights/{username}` · `GET, POST /api/semesters/{username}` · `POST /api/end-semester/{username}` · `GET, POST /api/subjects/{username}` · `POST /api/calibration/{username}` · `POST /api/focus-activity/{username}` · `POST /api/recovery-activity/{username}` · `POST /api/toggle-focus-activity/{username}?name=` · `POST /api/toggle-recovery-activity/{username}?name=` · `POST /api/wellness/{username}` · `POST /api/assignments/{username}` · `POST /api/submit-task/{username}?id=` |
+| Student (own data) | `GET /api/dashboard/{username}` · `GET /api/insights/{username}` · `GET, POST /api/semesters/{username}` · `POST /api/end-semester/{username}` · `GET, POST /api/subjects/{username}` · `POST /api/calibration/{username}` · `POST /api/focus-activity/{username}` · `POST /api/recovery-activity/{username}` · `POST /api/toggle-focus-activity/{username}?name=` · `POST /api/toggle-recovery-activity/{username}?name=` · `POST /api/wellness/{username}` · `POST /api/assignments/{username}` · `POST /api/submit-task/{username}?id=` · `POST /api/coping-plan/{username}` · `POST /api/end-coping-plan/{username}` · `GET /api/report/{username}` |
 | Faculty, Admin | `GET /api/faculty/heatmap?department=` · `GET /api/faculty/high-risk` |
 | Admin | `POST /api/admin/create-faculty` · `GET /api/admin/report/{semester}` · `GET /api/admin/trends` |
 
