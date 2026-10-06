@@ -1,14 +1,17 @@
 package com.campusbalance.analytics.service;
 
+import com.campusbalance.analytics.dto.AccountRequest;
 import com.campusbalance.analytics.model.*;
 import com.campusbalance.analytics.repository.StudentRepository;
 import com.campusbalance.analytics.repository.SubjectRepository;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -16,6 +19,9 @@ public class StudentService {
 
     // "Max Capacity" baseline from the CampusBalance Score formula: 60 hrs of productive work/week
     private static final double MAX_CAPACITY_HOURS = 60.0;
+    private static final int WELLNESS_LOG_XP = 20;
+    private static final int ASSIGNMENT_XP = 50;
+    static final String NO_ACTIVE_SEMESTER = "No active semester. Start one from the Semester tab first.";
 
     @Autowired
     private StudentRepository repository;
@@ -26,29 +32,38 @@ public class StudentService {
     @Autowired
     private AnalyticsService analyticsService;
 
-    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    private Student requireStudent(String username) {
+        Student s = repository.findByUsername(username);
+        if (s == null) throw ApiException.notFound("Student not found");
+        return s;
+    }
 
     // ================= Semester lifecycle =================
 
-    // Returns the live active semester, auto-archiving it first if its end date has already
-    // passed. Returns null if there's no active semester (never created one, or it just archived).
-    // Mutates `s` in memory only — callers are responsible for calling repository.save(s) afterward
-    // so an auto-archive that happens here is never silently lost.
-    private Semester getActiveSemester(Student s) {
-        Semester active = s.getSemesters().stream()
-                .filter(Semester::isActive)
-                .findFirst()
-                .orElse(null);
-        if (active == null) return null;
+    private static Semester findActive(Student s) {
+        return s.getSemesters().stream().filter(Semester::isActive).findFirst().orElse(null);
+    }
 
-        if (active.getEndDate() != null && !active.getEndDate().isBlank()) {
-            LocalDate end = LocalDate.parse(active.getEndDate());
-            if (LocalDate.now().isAfter(end)) {
-                archiveSemester(s, active);
-                return null;
-            }
+    // Returns the live active semester, or null if there is none. If its end date has already
+    // passed, it is archived and saved first. Only writes to the database when that archive
+    // actually happens, so read-only requests don't rewrite the student document.
+    private Semester activeSemester(Student s) {
+        Semester active = findActive(s);
+        if (active != null && active.hasEndedBy(LocalDate.now())) {
+            archiveSemester(s, active);
+            repository.save(s);
+            return null;
         }
         return active;
+    }
+
+    private Semester requireActiveSemester(Student s) {
+        Semester sem = activeSemester(s);
+        if (sem == null) throw ApiException.conflict(NO_ACTIVE_SEMESTER);
+        return sem;
     }
 
     private void archiveSemester(Student s, Semester sem) {
@@ -60,72 +75,63 @@ public class StudentService {
         sem.setFinalBalanceScore(Math.round(avg * 10.0) / 10.0);
         sem.setArchivedDate(LocalDate.now().toString());
         sem.setActive(false);
+        s.setActiveSemesterNumber(0);
     }
 
-    public Map<String, Object> createSemester(String username, Semester request) {
-        Student s = repository.findByUsername(username);
-        Map<String, Object> result = new HashMap<>();
-        if (s == null) { result.put("error", "Student not found"); return result; }
+    // Body: { startDate, endDate } (yyyy-MM-dd)
+    public Semester createSemester(String username, Semester request) {
+        Student s = requireStudent(username);
 
-        // Auto-archive an expired active semester first, so the check below is accurate
-        getActiveSemester(s);
+        LocalDate start = parseDate(request.getStartDate());
+        LocalDate end = parseDate(request.getEndDate());
+        if (start == null || end == null) throw ApiException.badRequest("Pick a valid start and end date");
+        if (!end.isAfter(start)) throw ApiException.badRequest("The end date must be after the start date");
+        if (end.isBefore(LocalDate.now())) throw ApiException.badRequest("That end date has already passed");
 
-        boolean hasLiveActive = s.getSemesters().stream().anyMatch(Semester::isActive);
-        if (hasLiveActive) {
-            repository.save(s);
-            result.put("error", "You already have an active semester. End it before starting a new one.");
-            return result;
+        if (activeSemester(s) != null) {
+            throw ApiException.conflict("You already have an active semester. End it before starting a new one.");
         }
 
         int nextNumber = s.getSemesters().stream().mapToInt(Semester::getNumber).max().orElse(0) + 1;
         Semester sem = new Semester();
         sem.setNumber(nextNumber);
-        sem.setStartDate(request.getStartDate());
-        sem.setEndDate(request.getEndDate());
+        sem.setStartDate(start.toString());
+        sem.setEndDate(end.toString());
         sem.setActive(true);
         s.getSemesters().add(sem);
         s.setActiveSemesterNumber(nextNumber);
         repository.save(s);
-
-        result.put("semester", sem);
-        return result;
+        return sem;
     }
 
     // Manual early end, triggered from the UI — same archive logic as the automatic date check
-    public boolean endSemester(String username) {
-        Student s = repository.findByUsername(username);
-        if (s == null) return false;
-        Semester active = s.getSemesters().stream().filter(Semester::isActive).findFirst().orElse(null);
-        if (active == null) return false;
+    public void endSemester(String username) {
+        Student s = requireStudent(username);
+        Semester active = findActive(s);
+        if (active == null) throw ApiException.conflict("No active semester to end.");
         archiveSemester(s, active);
         repository.save(s);
-        return true;
     }
 
     // Full semester history (active + archived) for the Profile view
     public List<Semester> getAllSemesters(String username) {
-        Student s = repository.findByUsername(username);
-        if (s == null) return Collections.emptyList();
-        getActiveSemester(s); // lazily auto-archive if expired
-        repository.save(s);
+        Student s = requireStudent(username);
+        activeSemester(s); // lazily auto-archive if expired
         return s.getSemesters();
     }
 
     // ================= Dashboard =================
 
     public Map<String, Object> getDashboardStats(String username) {
-        Student student = repository.findByUsername(username);
+        Student student = requireStudent(username);
+        Semester sem = activeSemester(student);
+
         Map<String, Object> stats = new HashMap<>();
-        if (student == null) return stats;
-
-        Semester sem = getActiveSemester(student);
-        repository.save(student); // persist any auto-archive that just happened
-
         stats.put("name", student.getName());
         stats.put("role", student.getRole());
         stats.put("department", student.getDepartment());
         stats.put("totalXP", student.getTotalXP());
-        stats.put("dailyStreak", student.getDailyStreak());
+        stats.put("dailyStreak", currentStreak(student));
 
         if (sem == null) {
             stats.put("hasActiveSemester", false);
@@ -141,17 +147,11 @@ public class StudentService {
         //    heuristic for subjects that haven't been calibrated yet.
         double courseworkLoad = computeCourseworkLoad(student, sem);
 
-        // 2. Focus Activities (replaces the old fixed "Toggle DSA" switch) — each active one adds stress
-        double focusLoad = sem.getFocusActivities().stream()
-                .filter(Activity::isActive)
-                .mapToDouble(Activity::getWeight)
-                .sum();
+        // 2. Focus Activities — each active one adds stress
+        double focusLoad = activeWeight(sem.getFocusActivities());
 
         // 3. Recovery Activities — each active one relieves stress, subtracted straight out of the load
-        double recoveryLoad = sem.getRecoveryActivities().stream()
-                .filter(Activity::isActive)
-                .mapToDouble(Activity::getWeight)
-                .sum();
+        double recoveryLoad = activeWeight(sem.getRecoveryActivities());
 
         // 4. Mood coefficient (Mc) from the latest wellness log this semester
         double moodCoef = 1.0;
@@ -179,6 +179,7 @@ public class StudentService {
         double balanceScore = Math.min(100, Math.max(0, 100 - workloadPercent + recoveryBonus));
         String risk = (balanceScore < 40) ? "HIGH" : (balanceScore < 70 ? "MEDIUM" : "LOW");
 
+        // Daily history point for the trend charts (stored separately, one per student per day)
         analyticsService.recordSnapshot(student, sem.getNumber(), finalWorkloadIndex, workloadPercent, balanceScore, risk);
 
         stats.put("balanceScore", Math.round(balanceScore));
@@ -193,6 +194,10 @@ public class StudentService {
         stats.put("subjectNames", sem.getSubjectNames());
 
         return stats;
+    }
+
+    private static double activeWeight(List<Activity> activities) {
+        return activities.stream().filter(Activity::isActive).mapToDouble(Activity::getWeight).sum();
     }
 
     private double computeCourseworkLoad(Student student, Semester sem) {
@@ -229,38 +234,21 @@ public class StudentService {
 
     // ================= Subjects (scoped to the active semester) =================
 
-    public Map<String, Object> addSubject(String username, Subject request) {
-        Student s = repository.findByUsername(username);
-        Map<String, Object> result = new HashMap<>();
-        if (s == null) { result.put("error", "Student not found"); return result; }
+    public Subject addSubject(String username, Subject request) {
+        Student s = requireStudent(username);
+        Semester sem = requireActiveSemester(s);
 
-        Semester sem = getActiveSemester(s);
-        if (sem == null) {
-            repository.save(s);
-            result.put("error", "No active semester. Start one from the Semester tab first.");
-            return result;
-        }
-
-        if (request.getSubjectName() == null || request.getSubjectName().isBlank()) {
-            repository.save(s);
-            result.put("error", "Subject name is required");
-            return result;
-        }
-
+        String name = request.getSubjectName().trim();
         Subject existing = subjectRepository.findBySubjectNameIgnoreCaseAndUsernameAndSemesterNumber(
-                request.getSubjectName(), username, sem.getNumber());
-        if (existing != null) {
-            repository.save(s);
-            result.put("error", "That subject already exists this semester.");
-            return result;
-        }
+                name, username, sem.getNumber());
+        if (existing != null) throw ApiException.conflict("That subject already exists this semester.");
 
         Subject subject = new Subject();
         subject.setUsername(username);
         subject.setSemesterNumber(sem.getNumber());
-        subject.setSubjectName(request.getSubjectName());
+        subject.setSubjectName(name);
         subject.setDepartment(request.getDepartment());
-        subject.setCredits(Math.max(request.getCredits(), 1));
+        subject.setCredits(request.getCredits());
         subject.setConstant(false);
         subject.setCalibrationComplete(false);
         subject.setCalibrationStartDate(LocalDate.now().toString());
@@ -268,143 +256,138 @@ public class StudentService {
 
         sem.getSubjectNames().add(subject.getSubjectName());
         repository.save(s);
-
-        result.put("subject", subject);
-        return result;
+        return subject;
     }
 
     public List<Subject> getSubjects(String username) {
-        Student s = repository.findByUsername(username);
-        if (s == null) return Collections.emptyList();
-        Semester sem = getActiveSemester(s);
-        repository.save(s);
+        Student s = requireStudent(username);
+        Semester sem = activeSemester(s);
         if (sem == null) return Collections.emptyList();
         return subjectRepository.findByUsernameAndSemesterNumber(username, sem.getNumber());
     }
 
     // ================= Focus / Recovery Activities =================
 
-    public boolean addFocusActivity(String username, Activity activity) {
-        Student s = repository.findByUsername(username);
-        if (s == null) return false;
-        Semester sem = getActiveSemester(s);
-        if (sem == null) { repository.save(s); return false; }
-        activity.setActive(true);
-        sem.getFocusActivities().add(activity);
-        repository.save(s);
-        return true;
+    public void addFocusActivity(String username, Activity activity) {
+        addActivity(username, activity, Semester::getFocusActivities);
     }
 
-    public boolean addRecoveryActivity(String username, Activity activity) {
-        Student s = repository.findByUsername(username);
-        if (s == null) return false;
-        Semester sem = getActiveSemester(s);
-        if (sem == null) { repository.save(s); return false; }
-        activity.setActive(true);
-        sem.getRecoveryActivities().add(activity);
-        repository.save(s);
-        return true;
+    public void addRecoveryActivity(String username, Activity activity) {
+        addActivity(username, activity, Semester::getRecoveryActivities);
     }
 
     public void toggleFocusActivity(String username, String name) {
-        Student s = repository.findByUsername(username);
-        if (s == null) return;
-        Semester sem = getActiveSemester(s);
-        if (sem == null) { repository.save(s); return; }
-        sem.getFocusActivities().stream()
-                .filter(a -> a.getName().equalsIgnoreCase(name))
-                .findFirst()
-                .ifPresent(a -> a.setActive(!a.isActive()));
-        repository.save(s);
+        toggleActivity(username, name, Semester::getFocusActivities);
     }
 
     public void toggleRecoveryActivity(String username, String name) {
-        Student s = repository.findByUsername(username);
-        if (s == null) return;
-        Semester sem = getActiveSemester(s);
-        if (sem == null) { repository.save(s); return; }
-        sem.getRecoveryActivities().stream()
-                .filter(a -> a.getName().equalsIgnoreCase(name))
-                .findFirst()
-                .ifPresent(a -> a.setActive(!a.isActive()));
+        toggleActivity(username, name, Semester::getRecoveryActivities);
+    }
+
+    // Names are unique per list (ignoring case) because pause/resume looks activities up by name
+    private void addActivity(String username, Activity activity, Function<Semester, List<Activity>> listOf) {
+        Student s = requireStudent(username);
+        List<Activity> list = listOf.apply(requireActiveSemester(s));
+
+        String name = activity.getName().trim();
+        if (list.stream().anyMatch(a -> name.equalsIgnoreCase(a.getName()))) {
+            throw ApiException.conflict("You already have \"" + name + "\" — pause or resume it instead.");
+        }
+        activity.setName(name);
+        activity.setActive(true);
+        list.add(activity);
+        repository.save(s);
+    }
+
+    // Applies to every entry with that name, so older data that still has duplicates stays in sync
+    private void toggleActivity(String username, String name, Function<Semester, List<Activity>> listOf) {
+        Student s = requireStudent(username);
+        List<Activity> matches = listOf.apply(requireActiveSemester(s)).stream()
+                .filter(a -> name.equalsIgnoreCase(a.getName()))
+                .toList();
+        if (matches.isEmpty()) throw ApiException.notFound("Activity not found");
+
+        boolean nowActive = !matches.get(0).isActive();
+        matches.forEach(a -> a.setActive(nowActive));
         repository.save(s);
     }
 
     // ================= Wellness logs (scoped to the active semester) =================
 
-    // Returns true if the log was saved, false if the student already logged today
-    // or has no active semester.
-    public boolean addWellnessLog(String username, WellnessLog log) {
-        Student s = repository.findByUsername(username);
-        if (s == null) return false;
-        Semester sem = getActiveSemester(s);
-        if (sem == null) { repository.save(s); return false; }
+    public void addWellnessLog(String username, WellnessLog log) {
+        Student s = requireStudent(username);
+        Semester sem = requireActiveSemester(s);
 
-        String today = LocalDate.now().toString();
+        LocalDate today = LocalDate.now();
         boolean alreadyLoggedToday = sem.getWellnessLogs().stream()
-                .anyMatch(l -> today.equals(l.getDate()));
-        if (alreadyLoggedToday) {
-            repository.save(s);
-            return false;
-        }
+                .anyMatch(l -> today.toString().equals(l.getDate()));
+        if (alreadyLoggedToday) throw ApiException.conflict("You've already checked in today — come back tomorrow.");
 
-        log.setDate(today); // server sets the date — don't trust the client's clock
+        log.setDate(today.toString()); // server sets the date — don't trust the client's clock
         sem.getWellnessLogs().add(log);
-        s.setTotalXP(s.getTotalXP() + 20);
+        s.setTotalXP(s.getTotalXP() + WELLNESS_LOG_XP);
+        updateStreak(s, today);
         repository.save(s);
-        return true;
     }
 
-    public Student login(String username, String password) {
-        Student s = repository.findByUsername(username);
-        if (s != null && s.getPassword() != null && passwordEncoder.matches(password, s.getPassword())) {
-            s.setPassword(null); // never send the password hash back to the client
-            return s;
-        }
-        return null; // Unauthorized
+    // Continues the streak if the last check-in was yesterday, otherwise restarts it at 1
+    private void updateStreak(Student s, LocalDate today) {
+        LocalDate last = parseDate(s.getLastCheckInDate());
+        if (today.equals(last)) return; // already counted today (e.g. a new semester started the same day)
+        s.setDailyStreak(today.minusDays(1).equals(last) ? s.getDailyStreak() + 1 : 1);
+        s.setLastCheckInDate(today.toString());
+    }
+
+    // The streak to show right now: it has lapsed if neither today nor yesterday had a check-in
+    private int currentStreak(Student s) {
+        LocalDate last = parseDate(s.getLastCheckInDate());
+        if (last == null || last.isBefore(LocalDate.now().minusDays(1))) return 0;
+        return s.getDailyStreak();
     }
 
     // ================= Assignments (scoped to the active semester) =================
 
-    public boolean addAssignment(String username, Student.Assignment a) {
-        Student s = repository.findByUsername(username);
-        if (s == null) return false;
-        Semester sem = getActiveSemester(s);
-        if (sem == null) { repository.save(s); return false; }
+    public Student.Assignment addAssignment(String username, Student.Assignment a) {
+        Student s = requireStudent(username);
+        Semester sem = requireActiveSemester(s);
 
-        int weight = difficultyToWeight(a.getDifficulty());
-        a.setDifficultyWeight(weight);
+        if (sem.getSubjectNames().stream().noneMatch(n -> n.equalsIgnoreCase(a.getSubject()))) {
+            throw ApiException.badRequest("Add \"" + a.getSubject() + "\" on the Subjects tab first");
+        }
+
+        a.setId(UUID.randomUUID().toString());
+        a.setTitle(a.getTitle().trim());
+        a.setDifficultyWeight(difficultyToWeight(a.getDifficulty()));
         a.setStatus("Pending");
+        a.setCompletedAt(null);
         sem.getAssignments().add(a);
         repository.save(s);
-        return true;
+        return a;
     }
 
-    public void submitAssignment(String username, String title) {
-        Student s = repository.findByUsername(username);
-        if (s == null) return;
-        Semester sem = getActiveSemester(s);
-        if (sem == null) { repository.save(s); return; }
-        sem.getAssignments().stream()
-                .filter(a -> a.getTitle().equals(title))
+    public void submitAssignment(String username, String assignmentId) {
+        Student s = requireStudent(username);
+        Semester sem = requireActiveSemester(s);
+
+        Student.Assignment a = sem.getAssignments().stream()
+                .filter(x -> assignmentId.equals(x.getId()))
                 .findFirst()
-                .ifPresent(a -> {
-                    a.setStatus("Completed");
-                    a.setCompletedAt(LocalDate.now().toString());
-                    s.setTotalXP(s.getTotalXP() + 50); // XP Reward for submission
-                });
+                .orElseThrow(() -> ApiException.notFound("Assignment not found"));
+        // XP is awarded once per assignment
+        if ("Completed".equalsIgnoreCase(a.getStatus())) throw ApiException.conflict("That assignment is already submitted.");
+
+        a.setStatus("Completed");
+        a.setCompletedAt(LocalDate.now().toString());
+        s.setTotalXP(s.getTotalXP() + ASSIGNMENT_XP);
         repository.save(s);
     }
 
-        // ================= Insights (trend forecast + rule-based recommendations) =================
+    // ================= Insights (trend forecast + rule-based recommendations) =================
 
     public Map<String, Object> getInsights(String username) {
-        Student student = repository.findByUsername(username);
+        Student student = requireStudent(username);
+        Semester sem = activeSemester(student);
         Map<String, Object> result = new HashMap<>();
-        if (student == null) return result;
-
-        Semester sem = getActiveSemester(student);
-        repository.save(student);
 
         List<AnalyticsResult> history = analyticsService.getHistoryFor(username);
         List<AnalyticsResult> recent = history.size() > 14
@@ -470,8 +453,8 @@ public class StudentService {
         result.put("hasActiveSemester", true);
 
         double courseworkLoad = computeCourseworkLoad(student, sem);
-        double focusLoad = sem.getFocusActivities().stream().filter(Activity::isActive).mapToDouble(Activity::getWeight).sum();
-        double recoveryLoad = sem.getRecoveryActivities().stream().filter(Activity::isActive).mapToDouble(Activity::getWeight).sum();
+        double focusLoad = activeWeight(sem.getFocusActivities());
+        double recoveryLoad = activeWeight(sem.getRecoveryActivities());
 
         Map<String, Object> breakdown = new HashMap<>();
         breakdown.put("courseworkLoad", Math.round(courseworkLoad * 10.0) / 10.0);
@@ -536,16 +519,19 @@ public class StudentService {
 
     // ================= Auth / Registration =================
 
-    // Public signup — always creates a STUDENT account, regardless of what the client sends
-    public boolean registerStudent(Student s) {
-        if (repository.findByUsername(s.getUsername()) != null) return false;
+    // Returns the account if the credentials match, otherwise null
+    public Student login(String username, String password) {
+        if (username == null || password == null) return null;
+        Student s = repository.findByUsername(username);
+        if (s != null && s.getPassword() != null && passwordEncoder.matches(password, s.getPassword())) {
+            return s;
+        }
+        return null;
+    }
 
-        s.setPassword(passwordEncoder.encode(s.getPassword()));
-        s.setRole("STUDENT");
-        s.setSemesters(new ArrayList<>());
-        s.setActiveSemesterNumber(0);
-        repository.save(s);
-        return true;
+    // Public signup — always creates a STUDENT account
+    public boolean registerStudent(AccountRequest request) {
+        return createAccount(request, "STUDENT");
     }
 
     public boolean adminExists() {
@@ -553,23 +539,39 @@ public class StudentService {
     }
 
     // One-time bootstrap: only succeeds if no admin account exists yet anywhere in the system
-    public boolean registerFirstAdmin(Student s) {
+    public boolean registerFirstAdmin(AccountRequest request) {
         if (adminExists()) return false;
-        if (repository.findByUsername(s.getUsername()) != null) return false;
-
-        s.setPassword(passwordEncoder.encode(s.getPassword()));
-        s.setRole("ADMIN");
-        repository.save(s);
-        return true;
+        return createAccount(request, "ADMIN");
     }
 
     // Called from the admin dashboard to provision a faculty account
-    public boolean createFaculty(Student s) {
-        if (repository.findByUsername(s.getUsername()) != null) return false;
+    public boolean createFaculty(AccountRequest request) {
+        return createAccount(request, "FACULTY");
+    }
 
-        s.setPassword(passwordEncoder.encode(s.getPassword()));
-        s.setRole("FACULTY");
-        repository.save(s);
+    // Builds a fresh account from the whitelisted request fields only. Returns false if the username is taken.
+    private boolean createAccount(AccountRequest request, String role) {
+        if (repository.findByUsername(request.username()) != null) return false;
+
+        Student account = new Student();
+        account.setUsername(request.username());
+        account.setPassword(passwordEncoder.encode(request.password()));
+        account.setName(request.name());
+        account.setDepartment(request.department());
+        account.setBatchYear(request.batchYear());
+        account.setRole(role);
+        repository.save(account);
         return true;
+    }
+
+    // ================= Helpers =================
+
+    private static LocalDate parseDate(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return LocalDate.parse(value);
+        } catch (DateTimeParseException e) {
+            return null;
+        }
     }
 }

@@ -13,12 +13,31 @@ RUN:   python list_accounts.py
 """
 
 import csv
+import os
+from pathlib import Path
 from urllib.parse import quote_plus
 
 from pymongo import MongoClient
 
-# Paste the SAME MongoDB connection string you used in seed_data.py
-MONGODB_URI = "mongodb+srv://guptamanan645_db_user:9311418110@manancluster1.4qhtora.mongodb.net/?appName=MananCluster1"
+
+def load_env_file():
+    """Reads KEY=VALUE lines from the git-ignored .env next to this script into
+    os.environ, without overriding variables that are already set."""
+    env_path = Path(__file__).with_name(".env")
+    if not env_path.exists():
+        return
+    for line in env_path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        os.environ.setdefault(key.strip(), value.strip())
+
+
+load_env_file()
+
+# Comes from the git-ignored .env file (see .env.example) -- never hard-coded here
+MONGODB_URI = os.environ.get("MONGODB_URI", "")
 DB_NAME = "campusbalance"
 OUTPUT_FILE = "campusbalance_accounts.csv"
 
@@ -34,8 +53,8 @@ def build_mongo_uri():
 
 
 if __name__ == "__main__":
-    if "PASTE_YOUR" in MONGODB_URI:
-        print("Edit MONGODB_URI at the top of this script first (same one from seed_data.py).")
+    if not MONGODB_URI or "PASTE_NEW_PASSWORD_HERE" in MONGODB_URI:
+        print("Set MONGODB_URI in the .env file first (see .env.example).")
         raise SystemExit(1)
 
     client = MongoClient(build_mongo_uri())

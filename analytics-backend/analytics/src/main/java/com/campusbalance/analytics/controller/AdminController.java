@@ -1,8 +1,9 @@
 package com.campusbalance.analytics.controller;
 
-import com.campusbalance.analytics.model.Student;
+import com.campusbalance.analytics.dto.AccountRequest;
 import com.campusbalance.analytics.service.AnalyticsService;
 import com.campusbalance.analytics.service.StudentService;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -10,9 +11,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 
+// Every route here requires an ADMIN token (see SecurityConfig)
 @RestController
 @RequestMapping("/api/admin")
-@CrossOrigin(origins = "*")
 public class AdminController {
 
     @Autowired
@@ -23,8 +24,8 @@ public class AdminController {
 
     // Admin provisions a faculty account — faculty never self-register
     @PostMapping("/create-faculty")
-    public ResponseEntity<?> createFaculty(@RequestBody Student s) {
-        boolean created = studentService.createFaculty(s);
+    public ResponseEntity<?> createFaculty(@Valid @RequestBody AccountRequest request) {
+        boolean created = studentService.createFaculty(request);
         if (created) {
             return ResponseEntity.ok("Faculty account created");
         } else {

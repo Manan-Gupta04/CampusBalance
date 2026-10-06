@@ -1,0 +1,5 @@
+# Local secrets (database password etc.) — never commit these
+.env
+
+# Generated locally by list_accounts.py (account list with the shared demo password)
+campusbalance_accounts.csv

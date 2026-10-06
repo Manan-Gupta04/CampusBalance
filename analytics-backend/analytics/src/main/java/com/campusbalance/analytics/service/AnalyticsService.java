@@ -1,5 +1,6 @@
 package com.campusbalance.analytics.service;
 
+import com.campusbalance.analytics.dto.CalibrationRequest;
 import com.campusbalance.analytics.model.*;
 import com.campusbalance.analytics.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,17 +33,14 @@ public class AnalyticsService {
 
     // The subject should already exist in the student's active semester (added via the Subjects
     // tab); if it somehow doesn't, we create a minimal placeholder so the calibration log isn't lost.
-    public Map<String, Object> submitCalibrationLog(String username, String subjectName,
-                                                      int difficulty, double studyHours, int weekNumber) {
-        Map<String, Object> result = new HashMap<>();
+    public Subject submitCalibrationLog(String username, CalibrationRequest request) {
         Student student = studentRepository.findByUsername(username);
-        if (student == null) { result.put("error", "Student not found"); return result; }
+        if (student == null) throw ApiException.notFound("Student not found");
 
         Semester sem = student.getSemesters().stream().filter(Semester::isActive).findFirst().orElse(null);
-        if (sem == null) { result.put("error", "No active semester"); return result; }
+        if (sem == null || sem.hasEndedBy(LocalDate.now())) throw ApiException.conflict(StudentService.NO_ACTIVE_SEMESTER);
 
-        if (subjectName == null || subjectName.isBlank()) { result.put("error", "Subject name is required"); return result; }
-
+        String subjectName = request.subjectName().trim();
         Subject subject = subjectRepository.findBySubjectNameIgnoreCaseAndUsernameAndSemesterNumber(
                 subjectName, username, sem.getNumber());
         if (subject == null) {
@@ -61,36 +59,40 @@ public class AnalyticsService {
             }
         }
 
+        // One rating per subject per week: re-submitting a week replaces the earlier rating
+        int week = request.weekNumber();
+        calibrationLogRepository.deleteAll(calibrationLogRepository.findBySubjectIdAndWeekNumber(subject.getId(), week));
+
         CalibrationLog log = new CalibrationLog();
         log.setSubjectId(subject.getId());
         log.setSubjectName(subject.getSubjectName());
         log.setUsername(username);
-        log.setSelfReportedDifficulty(Math.max(1, Math.min(5, difficulty)));
-        log.setStudyHoursThisWeek(studyHours);
-        log.setWeekNumber(weekNumber);
+        log.setSelfReportedDifficulty(request.difficulty());
+        log.setStudyHoursThisWeek(request.studyHours());
+        log.setWeekNumber(week);
         log.setLoggedDate(LocalDate.now().toString());
         calibrationLogRepository.save(log);
 
-        // Auto-finalize D_s once we have logs spanning both weeks of the calibration phase
-        boolean hasWeek1 = !calibrationLogRepository.findBySubjectIdAndWeekNumber(subject.getId(), 1).isEmpty();
-        boolean hasWeek2 = !calibrationLogRepository.findBySubjectIdAndWeekNumber(subject.getId(), 2).isEmpty();
-        if (hasWeek1 && hasWeek2) {
-            finalizeCalibration(subject);
-        }
-
-        result.put("subject", subjectRepository.findById(subject.getId()).orElse(subject));
-        result.put("message", "Calibration log recorded");
-        return result;
+        // Auto-finalizes D_s once both weeks of the calibration phase are logged
+        recalculateCalibration(subject);
+        return subjectRepository.findById(subject.getId()).orElse(subject);
     }
 
-    private void finalizeCalibration(Subject subject) {
-        List<CalibrationLog> logs = calibrationLogRepository.findBySubjectId(subject.getId());
-        if (logs.isEmpty()) return;
+    // D_s = (sum of self-reported difficulty for weeks 1 and 2 + avg weekly study hours) / credits.
+    // Only the latest rating for each week counts, so repeat submissions can't inflate D_s.
+    // Does nothing until both weeks have a rating.
+    public void recalculateCalibration(Subject subject) {
+        List<CalibrationLog> logs = new ArrayList<>(calibrationLogRepository.findBySubjectId(subject.getId()));
+        logs.sort(Comparator.comparing(CalibrationLog::getId)); // ObjectIds sort by creation time
 
-        int sumDifficulty = logs.stream().mapToInt(CalibrationLog::getSelfReportedDifficulty).sum();
-        double avgStudyHours = logs.stream().mapToDouble(CalibrationLog::getStudyHoursThisWeek).average().orElse(0);
+        Map<Integer, CalibrationLog> latestPerWeek = new TreeMap<>();
+        for (CalibrationLog log : logs) {
+            if (log.getWeekNumber() == 1 || log.getWeekNumber() == 2) latestPerWeek.put(log.getWeekNumber(), log);
+        }
+        if (latestPerWeek.size() < 2) return;
 
-        // D_s = (sum(self-reported difficulty) + avg study hours per week) / credits
+        int sumDifficulty = latestPerWeek.values().stream().mapToInt(CalibrationLog::getSelfReportedDifficulty).sum();
+        double avgStudyHours = latestPerWeek.values().stream().mapToDouble(CalibrationLog::getStudyHoursThisWeek).average().orElse(0);
         double ds = (sumDifficulty + avgStudyHours) / Math.max(subject.getCredits(), 1);
 
         subject.setDifficultyCoefficient(Math.round(ds * 100.0) / 100.0);
@@ -113,10 +115,7 @@ public class AnalyticsService {
         snapshot.setBurnoutRisk(burnoutRisk);
 
         // One snapshot per student per day: overwrite today's entry instead of stacking duplicates
-        List<AnalyticsResult> existing = analyticsResultRepository.findByUsernameOrderByDateAsc(student.getUsername());
-        existing.stream()
-                .filter(r -> r.getDate().equals(snapshot.getDate()))
-                .findFirst()
+        analyticsResultRepository.findFirstByUsernameAndDate(student.getUsername(), snapshot.getDate())
                 .ifPresent(r -> snapshot.setId(r.getId()));
 
         analyticsResultRepository.save(snapshot);
@@ -126,11 +125,23 @@ public class AnalyticsService {
         return analyticsResultRepository.findByUsernameOrderByDateAsc(username);
     }
 
+    private AnalyticsResult latestSnapshot(String username) {
+        return analyticsResultRepository.findFirstByUsernameOrderByDateDesc(username).orElse(null);
+    }
+
+    // Workload above 85% of capacity on each of the last 3 snapshots, and those were 3 consecutive days
+    // (snapshots only exist for days the student opened the app, so gaps don't count as "straight").
     public boolean hasSustainedOverload(String username) {
         List<AnalyticsResult> history = analyticsResultRepository.findByUsernameOrderByDateAsc(username);
         if (history.size() < 3) return false;
         List<AnalyticsResult> lastThree = history.subList(history.size() - 3, history.size());
-        return lastThree.stream().allMatch(r -> r.getWorkloadPercent() > 85);
+        if (!lastThree.stream().allMatch(r -> r.getWorkloadPercent() > 85)) return false;
+
+        LocalDate first = LocalDate.parse(lastThree.get(0).getDate());
+        for (int i = 1; i < lastThree.size(); i++) {
+            if (!LocalDate.parse(lastThree.get(i).getDate()).equals(first.plusDays(i))) return false;
+        }
+        return true;
     }
 
     // ---------- Faculty: class stress heatmap ----------
@@ -142,8 +153,7 @@ public class AnalyticsService {
 
         List<Map<String, Object>> rows = new ArrayList<>();
         for (Student s : students) {
-            List<AnalyticsResult> history = analyticsResultRepository.findByUsernameOrderByDateAsc(s.getUsername());
-            AnalyticsResult latest = history.isEmpty() ? null : history.get(history.size() - 1);
+            AnalyticsResult latest = latestSnapshot(s.getUsername());
             Map<String, Object> row = new HashMap<>();
             row.put("name", s.getName());
             row.put("username", s.getUsername());
@@ -173,10 +183,8 @@ public class AnalyticsService {
         List<Map<String, Object>> result = new ArrayList<>();
 
         for (Student s : students) {
-            List<AnalyticsResult> history = analyticsResultRepository.findByUsernameOrderByDateAsc(s.getUsername());
-            if (history.isEmpty()) continue;
-            AnalyticsResult latest = history.get(history.size() - 1);
-            if ("HIGH".equals(latest.getBurnoutRisk())) {
+            AnalyticsResult latest = latestSnapshot(s.getUsername());
+            if (latest != null && "HIGH".equals(latest.getBurnoutRisk())) {
                 Map<String, Object> row = new HashMap<>();
                 row.put("name", s.getName());
                 row.put("username", s.getUsername());
@@ -227,8 +235,8 @@ public class AnalyticsService {
         for (Map.Entry<String, List<Student>> entry : byDept.entrySet()) {
             List<Double> scores = new ArrayList<>();
             for (Student s : entry.getValue()) {
-                List<AnalyticsResult> history = analyticsResultRepository.findByUsernameOrderByDateAsc(s.getUsername());
-                if (!history.isEmpty()) scores.add(history.get(history.size() - 1).getBalanceScore());
+                AnalyticsResult latest = latestSnapshot(s.getUsername());
+                if (latest != null) scores.add(latest.getBalanceScore());
             }
             double avg = scores.stream().mapToDouble(Double::doubleValue).average().orElse(0);
             Map<String, Object> row = new HashMap<>();

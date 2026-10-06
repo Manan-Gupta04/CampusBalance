@@ -9,5 +9,5 @@ import java.util.List;
 public interface SubjectRepository extends MongoRepository<Subject, String> {
     Subject findBySubjectNameIgnoreCaseAndUsernameAndSemesterNumber(String subjectName, String username, int semesterNumber);
     List<Subject> findByUsernameAndSemesterNumber(String username, int semesterNumber);
-    List<Subject> findByDepartment(String department);
+    List<Subject> findByCalibrationCompleteTrue();
 }

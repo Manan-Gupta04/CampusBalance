@@ -1,8 +1,10 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>CampusBalance | Secure Login</title>
     <script src="config.js"></script>
+    <script src="app.js"></script>
     <style>
         :root { --primary: #4361ee; --dark: #1a1a2e; }
         body { background: var(--dark); display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', sans-serif; margin: 0; }
@@ -74,12 +76,6 @@
             }
         }
 
-        function redirectForRole(role) {
-            if (role === 'FACULTY') window.location.href = 'faculty.html';
-            else if (role === 'ADMIN') window.location.href = 'admin.html';
-            else window.location.href = 'index.html';
-        }
-
         async function handleAuth() {
             const username = document.getElementById('uid').value.trim();
             const password = document.getElementById('psw').value;
@@ -92,23 +88,20 @@
                 if (!name) return alert("Please enter your name");
 
                 try {
-                    // This page only ever creates STUDENT accounts — the backend enforces
-                    // that regardless of what's sent, but we don't even offer a role choice here.
+                    // This page only ever creates STUDENT accounts — the backend enforces that too.
                     const response = await fetch(`${API_BASE}/api/register`, {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({
-                            username, name, password, department,
-                            btechStartDate: "2023-08", btechEndDate: "2027-05"
-                        })
+                        body: JSON.stringify({ username, name, password, department })
                     });
                     if (response.ok) { alert("Registered! Now login."); toggleMode(); }
-                    else { alert("Registration failed — that username may already be taken."); }
+                    else { alert(await response.text() || "Registration failed."); }
                 } catch (err) {
                     alert("Could not reach the server. Is the backend running?");
                 }
             } else {
                 try {
+                    Session.clear(); // drop any old/expired login before starting a new one
                     const response = await fetch(`${API_BASE}/api/login`, {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
@@ -116,10 +109,9 @@
                     });
 
                     if (response.ok) {
-                        const student = await response.json();
-                        localStorage.setItem('activeUser', username);
-                        localStorage.setItem('activeRole', student.role || 'STUDENT');
-                        redirectForRole(student.role || 'STUDENT');
+                        const login = await response.json();
+                        Session.save(login);
+                        window.location.href = HOME_PAGE_BY_ROLE[login.role] || 'index.html';
                     } else {
                         alert("Login Failed: Incorrect ID or Password");
                     }

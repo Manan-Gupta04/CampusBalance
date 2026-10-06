@@ -7,9 +7,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 
+// Every route here requires a FACULTY or ADMIN token (see SecurityConfig)
 @RestController
 @RequestMapping("/api/faculty")
-@CrossOrigin(origins = "*")
 public class FacultyController {
 
     @Autowired

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <title>CampusBalance | Faculty Dashboard</title>
     <script src="config.js"></script>
+    <script src="app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -88,24 +89,14 @@
     </div>
 
     <script>
-        const user = localStorage.getItem('activeUser');
-        const role = localStorage.getItem('activeRole') || 'FACULTY';
         let heatChart;
-
-        function guardAccess() {
-            if (!user) { window.location.href = 'login.html'; return false; }
-            if (role === 'STUDENT') { window.location.href = 'index.html'; return false; }
-            if (role === 'ADMIN') { window.location.href = 'admin.html'; return false; }
-            document.getElementById('sideName').innerText = user;
-            return true;
-        }
 
         async function loadHeatmap() {
             const dept = document.getElementById('deptFilter').value.trim();
-            const url = dept ? `${API_BASE}/api/faculty/heatmap?department=${encodeURIComponent(dept)}`
-                              : `${API_BASE}/api/faculty/heatmap`;
+            const path = dept ? `/api/faculty/heatmap?department=${encodeURIComponent(dept)}`
+                              : '/api/faculty/heatmap';
             try {
-                const res = await fetch(url);
+                const res = await api(path);
                 const data = await res.json();
 
                 document.getElementById('totalStudents').innerText = data.totalStudents;
@@ -147,28 +138,28 @@
             students.forEach(s => {
                 const badgeClass = s.burnoutRisk === 'HIGH' ? 'HIGH' : s.burnoutRisk === 'MEDIUM' ? 'MEDIUM' : s.burnoutRisk === 'LOW' ? 'LOW' : 'NODATA';
                 body.innerHTML += `<tr>
-                    <td>${s.name || '-'}</td>
-                    <td>${s.username}</td>
-                    <td>${s.department || '-'}</td>
-                    <td>${s.semester}</td>
-                    <td>${s.balanceScore ?? '-'}</td>
-                    <td><span class="status-badge ${badgeClass}">${s.burnoutRisk}</span></td>
+                    <td>${escapeHtml(s.name || '-')}</td>
+                    <td>${escapeHtml(s.username)}</td>
+                    <td>${escapeHtml(s.department || '-')}</td>
+                    <td>${escapeHtml(s.semester)}</td>
+                    <td>${escapeHtml(s.balanceScore ?? '-')}</td>
+                    <td><span class="status-badge ${badgeClass}">${escapeHtml(s.burnoutRisk)}</span></td>
                 </tr>`;
             });
         }
 
         async function loadHighRisk() {
             try {
-                const res = await fetch(`${API_BASE}/api/faculty/high-risk`);
+                const res = await api('/api/faculty/high-risk');
                 const rows = await res.json();
                 const body = document.getElementById('riskTableBody');
                 body.innerHTML = '';
                 rows.forEach(r => {
                     body.innerHTML += `<tr>
-                        <td>${r.name || '-'}</td>
-                        <td>${r.username}</td>
-                        <td>${r.department || '-'}</td>
-                        <td>${r.balanceScore}</td>
+                        <td>${escapeHtml(r.name || '-')}</td>
+                        <td>${escapeHtml(r.username)}</td>
+                        <td>${escapeHtml(r.department || '-')}</td>
+                        <td>${escapeHtml(r.balanceScore)}</td>
                         <td>${r.sustainedOverload ? '⚠️ Yes' : 'No'}</td>
                     </tr>`;
                 });
@@ -178,9 +169,10 @@
             } catch (err) { console.error("High-risk load error", err); }
         }
 
-        function logout() { localStorage.clear(); window.location.href = 'login.html'; }
-
-        if (guardAccess()) loadHeatmap();
+        if (requireRole('FACULTY')) {
+            document.getElementById('sideName').innerText = Session.user;
+            loadHeatmap();
+        }
     </script>
 </body>
 </html>

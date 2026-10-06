@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <title>CampusBalance | Intelligent Student Analytics</title>
     <script src="config.js"></script>
+    <script src="app.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         :root {
@@ -99,6 +100,7 @@
                 <div class="card"><h3>Balance Score</h3><h2 id="balanceText">0%</h2></div>
                 <div class="card"><h3>Workload Index</h3><h2 id="workloadText">0.0</h2></div>
                 <div class="card"><h3>Total XP</h3><h2 id="xpText">0 XP</h2></div>
+                <div class="card"><h3>Daily Streak</h3><h2 id="streakText">0 days</h2></div>
             </div>
             <div class="card">
                 <h3>Wellness vs. Stress Trends</h3>
@@ -323,23 +325,23 @@
     </div>
 
     <script>
-        const user = localStorage.getItem('activeUser');
-        const role = localStorage.getItem('activeRole') || 'STUDENT';
+        const user = Session.user;
+        const me = encodeURIComponent(user || ''); // username, safe to put in a URL path
         let myChart;
         let dash = null; // last dashboard payload, reused across tabs
         let calViewDate = new Date();
 
         async function init() {
-            if(!user) { window.location.href = 'login.html'; return; }
-            // Only student accounts belong on this page — send faculty/admin to their own dashboard
-            if (role === 'FACULTY') { window.location.href = 'faculty.html'; return; }
-            if (role === 'ADMIN') { window.location.href = 'admin.html'; return; }
+            // Only student accounts belong on this page — faculty/admin get sent to their own dashboard
+            if (!requireRole('STUDENT')) return;
 
             try {
-                const res = await fetch(`${API_BASE}/api/dashboard/${user}`);
+                const res = await api(`/api/dashboard/${me}`);
                 dash = await res.json();
 
                 document.getElementById('sideName').innerText = "Hello, " + (dash.name || user);
+                const streak = dash.dailyStreak ?? 0;
+                document.getElementById('streakText').innerText = `🔥 ${streak} day${streak === 1 ? '' : 's'}`;
 
                 if (!dash.hasActiveSemester) {
                     document.getElementById('noSemesterBanner').style.display = 'block';
@@ -394,7 +396,7 @@
 
         async function loadInsights() {
             try {
-                const res = await fetch(`${API_BASE}/api/insights/${user}`);
+                const res = await api(`/api/insights/${me}`);
                 const data = await res.json();
                 renderInsights(data);
             } catch (err) { console.error("Insights load error", err); }
@@ -481,28 +483,23 @@
             list.innerHTML = '';
             (data.recommendations || []).forEach(r => {
                 const icon = r.severity === 'HIGH' ? '🚨' : r.severity === 'MEDIUM' ? '⚠️' : r.severity === 'POSITIVE' ? '✅' : r.severity === 'LOW' ? 'ℹ️' : '💬';
-                list.innerHTML += `<div class="rec-card rec-${r.severity}"><div style="font-size:20px;">${icon}</div><div>${r.message}</div></div>`;
+                list.innerHTML += `<div class="rec-card rec-${escapeHtml(r.severity)}"><div style="font-size:20px;">${icon}</div><div>${escapeHtml(r.message)}</div></div>`;
             });
         }
 
         async function submitLog() {
             const log = {
-                date: new Date().toISOString().split('T')[0],
                 sleepHours: parseFloat(document.getElementById('sleepHrs').value),
                 studyHours: parseFloat(document.getElementById('studyHrs').value),
                 mood: document.getElementById('moodSelect').value,
                 energyLevel: parseInt(document.getElementById('energyLv').value)
             };
-            const res = await fetch(`${API_BASE}/api/wellness/${user}`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(log)
-            });
-            if (res.ok) {
-                alert("Log Saved Successfully!");
-            } else {
-                const msg = await res.text();
-                alert(msg || "Could not save your log.");
+            if ([log.sleepHours, log.studyHours, log.energyLevel].some(Number.isNaN)) {
+                return alert("Please fill in sleep hours, study hours and energy level");
             }
+            const res = await api(`/api/wellness/${me}`, { method: 'POST', body: log });
+            if (!res.ok) { alert(await res.text() || "Could not save your log."); return; }
+            alert("Log Saved Successfully!");
             init(); showTab('dashboard', document.querySelector('.sidebar-item'));
         }
 
@@ -516,10 +513,7 @@
                 status: "Pending"
             };
             if (!task.subject) return alert("Add a subject first (Subjects tab), then pick it here.");
-            const res = await fetch(`${API_BASE}/api/assignments/${user}`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(task)
-            });
+            const res = await api(`/api/assignments/${me}`, { method: 'POST', body: task });
             if (!res.ok) { alert(await res.text()); }
             init();
         }
@@ -546,16 +540,17 @@
                 list.innerHTML += `
                     <div class="card" style="display:flex; justify-content:space-between; align-items:center; ${isDone ? 'opacity:0.5' : ''}">
                         <div style="${isDone ? 'text-decoration: line-through' : ''}">
-                            <strong>${t.title}</strong> (${t.subject})<br>
-                            <small>📅 ${t.deadline} | Priority: ${t.priority}</small>
+                            <strong>${escapeHtml(t.title)}</strong> (${escapeHtml(t.subject)})<br>
+                            <small>📅 ${escapeHtml(t.deadline)} | Priority: ${escapeHtml(t.priority)}</small>
                         </div>
-                        ${!isDone ? `<button onclick="completeTask('${t.title}')" class="btn-success">Submit</button>` : '✅'}
+                        ${!isDone ? `<button data-id="${escapeHtml(t.id)}" onclick="completeTask(this.dataset.id)" class="btn-success">Submit</button>` : '✅'}
                     </div>`;
             });
         }
 
-        async function completeTask(title) {
-            await fetch(`${API_BASE}/api/submit-task/${user}?title=${encodeURIComponent(title)}`, { method: 'POST' });
+        async function completeTask(id) {
+            const res = await api(`/api/submit-task/${me}?id=${encodeURIComponent(id)}`, { method: 'POST' });
+            if (!res.ok) alert(await res.text());
             init();
         }
 
@@ -585,10 +580,7 @@
                 credits: parseInt(document.getElementById('subCredits').value) || 3
             };
             if (!body.subjectName) return alert("Please enter a subject name");
-            const res = await fetch(`${API_BASE}/api/subjects/${user}`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(body)
-            });
+            const res = await api(`/api/subjects/${me}`, { method: 'POST', body });
             if (!res.ok) { alert(await res.text()); return; }
             document.getElementById('subName').value = '';
             document.getElementById('subDept').value = '';
@@ -599,7 +591,7 @@
 
         async function loadSubjectsFull() {
             try {
-                const res = await fetch(`${API_BASE}/api/subjects/${user}`);
+                const res = await api(`/api/subjects/${me}`);
                 const subjects = await res.json();
 
                 const dd = document.getElementById('cSubject');
@@ -622,11 +614,11 @@
                     list.innerHTML += `
                         <div class="card" style="display:flex; justify-content:space-between; align-items:center;">
                             <div>
-                                <strong>${s.subjectName}</strong> (${s.department || 'N/A'})<br>
-                                <small>Credits: ${s.credits}</small>
+                                <strong>${escapeHtml(s.subjectName)}</strong> (${escapeHtml(s.department || 'N/A')})<br>
+                                <small>Credits: ${escapeHtml(s.credits)}</small>
                             </div>
                             <span class="status-badge ${s.calibrationComplete ? 'LOW' : 'MEDIUM'}">
-                                ${s.calibrationComplete ? 'D_s = ' + s.difficultyCoefficient : 'Calibrating...'}
+                                ${s.calibrationComplete ? 'D_s = ' + escapeHtml(s.difficultyCoefficient) : 'Calibrating...'}
                             </span>
                         </div>`;
                 });
@@ -642,10 +634,8 @@
             };
             if (!body.subjectName) return alert("Add a subject first, then pick it here.");
 
-            await fetch(`${API_BASE}/api/calibration/${user}`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(body)
-            });
+            const res = await api(`/api/calibration/${me}`, { method: 'POST', body });
+            if (!res.ok) { alert(await res.text()); return; }
             alert("Calibration log recorded!");
             loadSubjectsFull();
         }
@@ -670,10 +660,7 @@
                 const [n, w] = preset.split('|');
                 name = n; weight = parseInt(w); custom = false;
             }
-            const res = await fetch(`${API_BASE}/api/focus-activity/${user}`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ name, weight, custom })
-            });
+            const res = await api(`/api/focus-activity/${me}`, { method: 'POST', body: { name, weight, custom } });
             if (!res.ok) { alert(await res.text()); return; }
             document.getElementById('focusPreset').value = '';
             document.getElementById('focusCustomBox').style.display = 'none';
@@ -688,14 +675,15 @@
             list.forEach(a => {
                 el.innerHTML += `
                     <div class="card" style="display:flex; justify-content:space-between; align-items:center; ${a.active ? '' : 'opacity:0.5'}">
-                        <div><strong>${a.name}</strong><br><small>Stress weight: ${a.weight}${a.custom ? ' (custom)' : ''}</small></div>
-                        <button class="btn-success" style="background:${a.active ? '#f72585' : '#52c41a'}" onclick="toggleFocus('${a.name}')">${a.active ? 'Pause' : 'Resume'}</button>
+                        <div><strong>${escapeHtml(a.name)}</strong><br><small>Stress weight: ${escapeHtml(a.weight)}${a.custom ? ' (custom)' : ''}</small></div>
+                        <button class="btn-success" style="background:${a.active ? '#f72585' : '#52c41a'}" data-name="${escapeHtml(a.name)}" onclick="toggleFocus(this.dataset.name)">${a.active ? 'Pause' : 'Resume'}</button>
                     </div>`;
             });
         }
 
         async function toggleFocus(name) {
-            await fetch(`${API_BASE}/api/toggle-focus-activity/${user}?name=${encodeURIComponent(name)}`, { method: 'POST' });
+            const res = await api(`/api/toggle-focus-activity/${me}?name=${encodeURIComponent(name)}`, { method: 'POST' });
+            if (!res.ok) alert(await res.text());
             init();
         }
 
@@ -719,10 +707,7 @@
                 const [n, w] = preset.split('|');
                 name = n; weight = parseInt(w); custom = false;
             }
-            const res = await fetch(`${API_BASE}/api/recovery-activity/${user}`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ name, weight, custom })
-            });
+            const res = await api(`/api/recovery-activity/${me}`, { method: 'POST', body: { name, weight, custom } });
             if (!res.ok) { alert(await res.text()); return; }
             document.getElementById('recoveryPreset').value = '';
             document.getElementById('recoveryCustomBox').style.display = 'none';
@@ -737,14 +722,15 @@
             list.forEach(a => {
                 el.innerHTML += `
                     <div class="card" style="display:flex; justify-content:space-between; align-items:center; ${a.active ? '' : 'opacity:0.5'}">
-                        <div><strong>${a.name}</strong><br><small>Relief weight: ${a.weight}${a.custom ? ' (custom)' : ''}</small></div>
-                        <button class="btn-success" style="background:${a.active ? '#f72585' : '#52c41a'}" onclick="toggleRecovery('${a.name}')">${a.active ? 'Pause' : 'Resume'}</button>
+                        <div><strong>${escapeHtml(a.name)}</strong><br><small>Relief weight: ${escapeHtml(a.weight)}${a.custom ? ' (custom)' : ''}</small></div>
+                        <button class="btn-success" style="background:${a.active ? '#f72585' : '#52c41a'}" data-name="${escapeHtml(a.name)}" onclick="toggleRecovery(this.dataset.name)">${a.active ? 'Pause' : 'Resume'}</button>
                     </div>`;
             });
         }
 
         async function toggleRecovery(name) {
-            await fetch(`${API_BASE}/api/toggle-recovery-activity/${user}?name=${encodeURIComponent(name)}`, { method: 'POST' });
+            const res = await api(`/api/toggle-recovery-activity/${me}?name=${encodeURIComponent(name)}`, { method: 'POST' });
+            if (!res.ok) alert(await res.text());
             init();
         }
 
@@ -798,8 +784,8 @@
             const body = document.getElementById('dayModalBody');
             body.innerHTML = tasks.length ? tasks.map(t => `
                 <div style="padding:8px 0; border-bottom:1px solid #eee;">
-                    <strong>${t.title}</strong> (${t.subject})<br>
-                    <small>Priority: ${t.priority} | ${t.status}</small>
+                    <strong>${escapeHtml(t.title)}</strong> (${escapeHtml(t.subject)})<br>
+                    <small>Priority: ${escapeHtml(t.priority)} | ${escapeHtml(t.status)}</small>
                 </div>`).join('') : '<p style="color:#888;">No tasks due this day.</p>';
             document.getElementById('dayModal').style.display = 'flex';
         }
@@ -814,8 +800,8 @@
             const box = document.getElementById('semesterStatus');
             if (!box) return;
             if (dash && dash.hasActiveSemester) {
-                box.innerHTML = `<p>Semester <strong>${dash.semesterNumber}</strong> is active.<br>
-                    ${dash.semesterStart || '?'} → ${dash.semesterEnd || 'no end date set'}</p>`;
+                box.innerHTML = `<p>Semester <strong>${escapeHtml(dash.semesterNumber)}</strong> is active.<br>
+                    ${escapeHtml(dash.semesterStart || '?')} → ${escapeHtml(dash.semesterEnd || 'no end date set')}</p>`;
             } else {
                 box.innerHTML = `<p style="color:#888;">You have no active semester right now. Start one below.</p>`;
             }
@@ -825,10 +811,7 @@
             const startDate = document.getElementById('semStart').value;
             const endDate = document.getElementById('semEnd').value;
             if (!startDate || !endDate) return alert("Pick both a start and end date");
-            const res = await fetch(`${API_BASE}/api/semesters/${user}`, {
-                method: 'POST', headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ startDate, endDate })
-            });
+            const res = await api(`/api/semesters/${me}`, { method: 'POST', body: { startDate, endDate } });
             if (!res.ok) { alert(await res.text()); return; }
             alert("Semester started!");
             init();
@@ -836,7 +819,7 @@
 
         async function endSemesterNow() {
             if (!confirm("End your current semester now? Its data will move to your Profile as read-only history.")) return;
-            const res = await fetch(`${API_BASE}/api/end-semester/${user}`, { method: 'POST' });
+            const res = await api(`/api/end-semester/${me}`, { method: 'POST' });
             const msg = await res.text();
             alert(msg);
             init();
@@ -846,7 +829,7 @@
 
         async function loadSemesterHistory() {
             try {
-                const res = await fetch(`${API_BASE}/api/semesters/${user}`);
+                const res = await api(`/api/semesters/${me}`);
                 const semesters = await res.json();
                 window._semesterCache = semesters;
                 const list = document.getElementById('semesterHistoryList');
@@ -855,12 +838,12 @@
                 if (!semesters.length) { list.innerHTML = '<p style="color:#888;">No semesters yet.</p>'; return; }
                 semesters.slice().reverse().forEach(s => {
                     list.innerHTML += `
-                        <div class="card" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="showSemesterDetail(${s.number})">
+                        <div class="card" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="showSemesterDetail(${Number(s.number)})">
                             <div>
-                                <strong>Semester ${s.number}</strong> ${s.active ? '<span class="status-badge LOW">ACTIVE</span>' : '<span class="status-badge" style="background:#eee;color:#888;">ARCHIVED</span>'}<br>
-                                <small>${s.startDate || '?'} → ${s.endDate || '?'}</small>
+                                <strong>Semester ${escapeHtml(s.number)}</strong> ${s.active ? '<span class="status-badge LOW">ACTIVE</span>' : '<span class="status-badge" style="background:#eee;color:#888;">ARCHIVED</span>'}<br>
+                                <small>${escapeHtml(s.startDate || '?')} → ${escapeHtml(s.endDate || '?')}</small>
                             </div>
-                            <div>${s.finalBalanceScore != null ? 'Final Balance: ' + s.finalBalanceScore + '%' : ''}</div>
+                            <div>${s.finalBalanceScore != null ? 'Final Balance: ' + escapeHtml(s.finalBalanceScore) + '%' : ''}</div>
                         </div>`;
                 });
             } catch (err) { console.error("Semester history load error", err); }
@@ -872,27 +855,27 @@
             const el = document.getElementById('semesterDetailView');
             if (!sem || !el) return;
 
-            let html = `<div class="card"><h3>Semester ${sem.number} Detail ${sem.active ? '(active)' : '(read-only)'}</h3>`;
+            let html = `<div class="card"><h3>Semester ${escapeHtml(sem.number)} Detail ${sem.active ? '(active)' : '(read-only)'}</h3>`;
 
             html += `<h4>Subjects</h4>`;
             html += (sem.subjectNames && sem.subjectNames.length)
-                ? sem.subjectNames.map(n => `<span class="status-badge MEDIUM" style="margin-right:6px;">${n}</span>`).join('')
+                ? sem.subjectNames.map(n => `<span class="status-badge MEDIUM" style="margin-right:6px;">${escapeHtml(n)}</span>`).join('')
                 : '<p style="color:#888;">None</p>';
 
             html += `<h4 style="margin-top:16px;">Assignments</h4>`;
             html += (sem.assignments && sem.assignments.length)
                 ? sem.assignments.map(a => `<div style="padding:8px 0; border-bottom:1px solid #eee;">
-                    <strong>${a.title}</strong> (${a.subject}) — ${a.status}<br><small>📅 ${a.deadline}</small></div>`).join('')
+                    <strong>${escapeHtml(a.title)}</strong> (${escapeHtml(a.subject)}) — ${escapeHtml(a.status)}<br><small>📅 ${escapeHtml(a.deadline)}</small></div>`).join('')
                 : '<p style="color:#888;">None</p>';
 
             html += `<h4 style="margin-top:16px;">Wellness Logs</h4>`;
             html += (sem.wellnessLogs && sem.wellnessLogs.length)
                 ? sem.wellnessLogs.map(l => `<div style="padding:8px 0; border-bottom:1px solid #eee;">
-                    ${l.date}: Sleep ${l.sleepHours}h, Study ${l.studyHours}h, Mood ${l.mood}, Energy ${l.energyLevel}</div>`).join('')
+                    ${escapeHtml(l.date)}: Sleep ${escapeHtml(l.sleepHours)}h, Study ${escapeHtml(l.studyHours)}h, Mood ${escapeHtml(l.mood)}, Energy ${escapeHtml(l.energyLevel)}</div>`).join('')
                 : '<p style="color:#888;">None</p>';
 
             if (sem.finalBalanceScore != null) {
-                html += `<h4 style="margin-top:16px;">Final Balance Score: ${sem.finalBalanceScore}%</h4>`;
+                html += `<h4 style="margin-top:16px;">Final Balance Score: ${escapeHtml(sem.finalBalanceScore)}%</h4>`;
             }
 
             html += `</div>`;
@@ -906,7 +889,6 @@
             if(el) el.classList.add('active-tab');
         }
 
-        function logout() { localStorage.clear(); window.location.href='login.html'; }
         init();
     </script>
 </body>

@@ -1,36 +1,51 @@
 package com.campusbalance.analytics.controller;
 
+import com.campusbalance.analytics.dto.AccountRequest;
+import com.campusbalance.analytics.dto.LoginRequest;
+import com.campusbalance.analytics.dto.LoginResponse;
 import com.campusbalance.analytics.model.*;
+import com.campusbalance.analytics.security.TokenService;
 import com.campusbalance.analytics.service.StudentService;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Account + per-student endpoints. Every route with a {username} is restricted to that user
+ * by @PreAuthorize — the logged-in user's token subject must match the URL.
+ * Errors are thrown as ApiException and turned into status + message by ApiExceptionHandler.
+ */
 @RestController
 @RequestMapping("/api")
-@CrossOrigin(origins = "*")
 public class StudentController {
+
+    private static final String SELF_ONLY = "#username == authentication.name";
 
     @Autowired
     private StudentService service;
 
-    @GetMapping("/dashboard/{username}")
-    public Map<String, Object> getDashboard(@PathVariable String username) {
-        return service.getDashboardStats(username);
+    @Autowired
+    private TokenService tokenService;
+
+    // ---------- Auth (public) ----------
+
+    @PostMapping("/login")
+    public ResponseEntity<?> login(@RequestBody LoginRequest credentials) {
+        Student account = service.login(credentials.username(), credentials.password());
+        if (account == null) {
+            return ResponseEntity.status(401).body("Invalid Username or Password");
+        }
+        return ResponseEntity.ok(new LoginResponse(
+                tokenService.issue(account), account.getUsername(), account.getName(), account.getRole()));
     }
 
-        // Trend forecast + rule-based recommendations, powers the Insights tab
-    @GetMapping("/insights/{username}")
-    public Map<String, Object> getInsights(@PathVariable String username) {
-        return service.getInsights(username);
-    }
-
-    
     @PostMapping("/register")
-    public ResponseEntity<?> register(@RequestBody Student s) {
-        boolean created = service.registerStudent(s);
+    public ResponseEntity<?> register(@Valid @RequestBody AccountRequest request) {
+        boolean created = service.registerStudent(request);
         if (created) {
             return ResponseEntity.ok("Success");
         } else {
@@ -45,8 +60,8 @@ public class StudentController {
 
     // One-time setup route — only works until the first admin account is created, then always 409s
     @PostMapping("/register-admin")
-    public ResponseEntity<?> registerAdmin(@RequestBody Student s) {
-        boolean created = service.registerFirstAdmin(s);
+    public ResponseEntity<?> registerAdmin(@Valid @RequestBody AccountRequest request) {
+        boolean created = service.registerFirstAdmin(request);
         if (created) {
             return ResponseEntity.ok("Admin account created");
         } else {
@@ -54,46 +69,54 @@ public class StudentController {
         }
     }
 
+    // ---------- Dashboard / Insights ----------
+
+    @PreAuthorize(SELF_ONLY)
+    @GetMapping("/dashboard/{username}")
+    public Map<String, Object> getDashboard(@PathVariable String username) {
+        return service.getDashboardStats(username);
+    }
+
+    // Trend forecast + rule-based recommendations, powers the Insights tab
+    @PreAuthorize(SELF_ONLY)
+    @GetMapping("/insights/{username}")
+    public Map<String, Object> getInsights(@PathVariable String username) {
+        return service.getInsights(username);
+    }
+
     // ---------- Semester lifecycle ----------
 
     // Body: { startDate, endDate } (yyyy-MM-dd). Rejects if a live active semester already exists.
+    @PreAuthorize(SELF_ONLY)
     @PostMapping("/semesters/{username}")
-    public ResponseEntity<?> createSemester(@PathVariable String username, @RequestBody Semester request) {
-        Map<String, Object> result = service.createSemester(username, request);
-        if (result.containsKey("error")) {
-            return ResponseEntity.status(409).body(result.get("error"));
-        }
-        return ResponseEntity.ok(result.get("semester"));
+    public Semester createSemester(@PathVariable String username, @RequestBody Semester request) {
+        return service.createSemester(username, request);
     }
 
     // Full semester history (active + archived) — powers the Profile/History view
+    @PreAuthorize(SELF_ONLY)
     @GetMapping("/semesters/{username}")
     public List<Semester> getSemesters(@PathVariable String username) {
         return service.getAllSemesters(username);
     }
 
     // Manually ends the active semester early (it also auto-ends on its own once its end date passes)
+    @PreAuthorize(SELF_ONLY)
     @PostMapping("/end-semester/{username}")
-    public ResponseEntity<?> endSemester(@PathVariable String username) {
-        boolean ended = service.endSemester(username);
-        if (ended) {
-            return ResponseEntity.ok("Semester ended — its data has moved to your Profile.");
-        } else {
-            return ResponseEntity.status(409).body("No active semester to end.");
-        }
+    public String endSemester(@PathVariable String username) {
+        service.endSemester(username);
+        return "Semester ended — its data has moved to your Profile.";
     }
 
     // ---------- Subjects (scoped to the active semester) ----------
 
+    @PreAuthorize(SELF_ONLY)
     @PostMapping("/subjects/{username}")
-    public ResponseEntity<?> addSubject(@PathVariable String username, @RequestBody Subject request) {
-        Map<String, Object> result = service.addSubject(username, request);
-        if (result.containsKey("error")) {
-            return ResponseEntity.status(409).body(result.get("error"));
-        }
-        return ResponseEntity.ok(result.get("subject"));
+    public Subject addSubject(@PathVariable String username, @Valid @RequestBody Subject request) {
+        return service.addSubject(username, request);
     }
 
+    @PreAuthorize(SELF_ONLY)
     @GetMapping("/subjects/{username}")
     public List<Subject> getSubjects(@PathVariable String username) {
         return service.getSubjects(username);
@@ -102,67 +125,54 @@ public class StudentController {
     // ---------- Focus / Recovery activities ----------
 
     // Body: { name, weight (1-10), custom }
+    @PreAuthorize(SELF_ONLY)
     @PostMapping("/focus-activity/{username}")
-    public ResponseEntity<?> addFocusActivity(@PathVariable String username, @RequestBody Activity activity) {
-        boolean ok = service.addFocusActivity(username, activity);
-        if (ok) return ResponseEntity.ok("Focus activity added");
-        return ResponseEntity.status(409).body("No active semester. Start one from the Semester tab first.");
+    public String addFocusActivity(@PathVariable String username, @Valid @RequestBody Activity activity) {
+        service.addFocusActivity(username, activity);
+        return "Focus activity added";
     }
 
+    @PreAuthorize(SELF_ONLY)
     @PostMapping("/recovery-activity/{username}")
-    public ResponseEntity<?> addRecoveryActivity(@PathVariable String username, @RequestBody Activity activity) {
-        boolean ok = service.addRecoveryActivity(username, activity);
-        if (ok) return ResponseEntity.ok("Recovery activity added");
-        return ResponseEntity.status(409).body("No active semester. Start one from the Semester tab first.");
+    public String addRecoveryActivity(@PathVariable String username, @Valid @RequestBody Activity activity) {
+        service.addRecoveryActivity(username, activity);
+        return "Recovery activity added";
     }
 
+    @PreAuthorize(SELF_ONLY)
     @PostMapping("/toggle-focus-activity/{username}")
-    public void toggleFocusActivity(@PathVariable String username, @RequestParam String name) {
+    public String toggleFocusActivity(@PathVariable String username, @RequestParam String name) {
         service.toggleFocusActivity(username, name);
+        return "Updated";
     }
 
+    @PreAuthorize(SELF_ONLY)
     @PostMapping("/toggle-recovery-activity/{username}")
-    public void toggleRecoveryActivity(@PathVariable String username, @RequestParam String name) {
+    public String toggleRecoveryActivity(@PathVariable String username, @RequestParam String name) {
         service.toggleRecoveryActivity(username, name);
+        return "Updated";
     }
 
     // ---------- Wellness / Assignments ----------
 
+    @PreAuthorize(SELF_ONLY)
     @PostMapping("/wellness/{username}")
-    public ResponseEntity<?> addWellness(@PathVariable String username, @RequestBody WellnessLog log) {
-        boolean saved = service.addWellnessLog(username, log);
-        if (saved) {
-            return ResponseEntity.ok("Log Saved");
-        } else {
-            return ResponseEntity.status(409).body("You've already logged today, or you have no active semester.");
-        }
+    public String addWellness(@PathVariable String username, @Valid @RequestBody WellnessLog log) {
+        service.addWellnessLog(username, log);
+        return "Log Saved";
     }
 
+    // Returns the created assignment, including its generated id
+    @PreAuthorize(SELF_ONLY)
     @PostMapping("/assignments/{username}")
-    public ResponseEntity<?> addAssignment(@PathVariable String username, @RequestBody Student.Assignment a) {
-        boolean saved = service.addAssignment(username, a);
-        if (saved) {
-            return ResponseEntity.ok("Assignment Added");
-        } else {
-            return ResponseEntity.status(409).body("No active semester. Start one from the Semester tab first.");
-        }
+    public Student.Assignment addAssignment(@PathVariable String username, @Valid @RequestBody Student.Assignment a) {
+        return service.addAssignment(username, a);
     }
 
+    @PreAuthorize(SELF_ONLY)
     @PostMapping("/submit-task/{username}")
-    public void submitTask(@PathVariable String username, @RequestParam String title) {
-        service.submitAssignment(username, title);
-    }
-
-    @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody Map<String, String> credentials) {
-        String username = credentials.get("username");
-        String password = credentials.get("password");
-
-        Student student = service.login(username, password);
-        if (student != null) {
-            return ResponseEntity.ok(student);
-        } else {
-            return ResponseEntity.status(401).body("Invalid Username or Password");
-        }
+    public String submitTask(@PathVariable String username, @RequestParam String id) {
+        service.submitAssignment(username, id);
+        return "Assignment submitted";
     }
 }

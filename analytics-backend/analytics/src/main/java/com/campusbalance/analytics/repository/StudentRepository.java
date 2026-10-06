@@ -8,8 +8,6 @@ import java.util.List;
 
 @Repository
 public interface StudentRepository extends MongoRepository<Student, String> {
-    Student findByName(String name);
-    // This MUST match the variable name in your Student class!
     Student findByUsername(String username);
     List<Student> findByRole(String role);
     List<Student> findByRoleAndDepartment(String role, String department);

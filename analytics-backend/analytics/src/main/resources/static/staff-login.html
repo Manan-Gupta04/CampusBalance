@@ -1,8 +1,10 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>CampusBalance | Staff Access</title>
     <script src="config.js"></script>
+    <script src="app.js"></script>
     <style>
         :root { --primary: #1a1a2e; --accent: #4361ee; }
         body { background: var(--primary); display: flex; justify-content: center; align-items: center; height: 100vh; font-family: 'Segoe UI', sans-serif; margin: 0; }
@@ -83,6 +85,7 @@
             if (!username || !password) return alert("Please fill in username and password");
 
             try {
+                Session.clear(); // drop any old/expired login before starting a new one
                 const response = await fetch(`${API_BASE}/api/login`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -90,14 +93,13 @@
                 });
 
                 if (response.ok) {
-                    const account = await response.json();
-                    if (account.role === 'STUDENT') {
+                    const login = await response.json();
+                    if (login.role === 'STUDENT') {
                         alert("This is a student account — please use the main login page instead.");
                         return;
                     }
-                    localStorage.setItem('activeUser', username);
-                    localStorage.setItem('activeRole', account.role);
-                    window.location.href = account.role === 'ADMIN' ? 'admin.html' : 'faculty.html';
+                    Session.save(login);
+                    window.location.href = HOME_PAGE_BY_ROLE[login.role];
                 } else {
                     alert("Login Failed: Incorrect username or password");
                 }

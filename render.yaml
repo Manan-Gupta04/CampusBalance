@@ -1,0 +1,19 @@
+# Render Blueprint: one web service that serves both the API and the web pages.
+# Deploy with Render Dashboard -> New -> Blueprint -> pick this repo.
+services:
+  - type: web
+    name: campusbalance
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./analytics-backend/analytics/Dockerfile
+    dockerContext: ./analytics-backend/analytics
+    healthCheckPath: /login.html
+    autoDeployTrigger: commit
+    envVars:
+      - key: MONGODB_URI
+        sync: false          # Render asks for it when you create the Blueprint — paste your Atlas connection string
+      - key: JWT_SECRET
+        generateValue: true  # random secret that signs login tokens
+      - key: TZ
+        value: Asia/Kolkata

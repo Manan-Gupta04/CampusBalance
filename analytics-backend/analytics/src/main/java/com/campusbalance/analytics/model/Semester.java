@@ -4,6 +4,8 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -25,4 +27,14 @@ public class Semester {
     // Set once the semester is archived (manually ended, or auto-ended by date)
     private Double finalBalanceScore;
     private String archivedDate;
+
+    // True once `today` is past the end date. A missing or unreadable end date never expires.
+    public boolean hasEndedBy(LocalDate today) {
+        if (endDate == null || endDate.isBlank()) return false;
+        try {
+            return today.isAfter(LocalDate.parse(endDate));
+        } catch (DateTimeParseException e) {
+            return false;
+        }
+    }
 }
